@@ -826,80 +826,111 @@ export default function NetworkCapabilityTester() {
 
   return (
     <div className="app-root">
+      {isRunning && (
+        <div className="loading-banner" role="status" aria-live="polite">
+          <span className="loading-banner__spinner" aria-hidden="true" />
+          <span className="loading-banner__text">Running speed test…</span>
+        </div>
+      )}
       <div className="app-container">
-        <section className="panel panel--elevated">
-          <div className="panel-header">
-            <div>
-              <h2 className="panel-title">Speed Test</h2>
-              <span className="panel-subtitle">DL/UL ~6s/5s + RTT</span>
-            </div>
-            <div className="test-progress">
-              <span className="test-progress__label">{status.label}</span>
-              <span className="test-progress__meter">
-                Step {Math.min(status.step, TOTAL_STEPS)} / {TOTAL_STEPS}
-              </span>
-            </div>
-          </div>
-          {Object.values(stepErrors).some(Boolean) && (
-            <div className="test-progress__errors">
-              {stepErrors.dl && <div>Download error: {stepErrors.dl}</div>}
-              {stepErrors.ul && <div>Upload error: {stepErrors.ul}</div>}
-              {stepErrors.rtt && <div>Latency error: {stepErrors.rtt}</div>}
+        <section className={`panel panel--elevated ${isRunning ? 'panel--loading' : ''}`}>
+          {isRunning && (
+            <div className="panel-skeleton panel-skeleton--speedtest" aria-hidden="true">
+              <div className="panel-skeleton__header">
+                <span className="skeleton skeleton--title" />
+                <span className="skeleton skeleton--pill" />
+              </div>
+              <div className="panel-skeleton__subheader">
+                <span className="skeleton skeleton--text" />
+                <span className="skeleton skeleton--text skeleton--short" />
+              </div>
+              <div className="panel-skeleton__grid panel-skeleton__grid--main">
+                <span className="skeleton skeleton--card" />
+                <span className="skeleton skeleton--card" />
+              </div>
+              <div className="panel-skeleton__grid panel-skeleton__grid--details">
+                <span className="skeleton skeleton--card" />
+                <span className="skeleton skeleton--card" />
+                <span className="skeleton skeleton--card" />
+                <span className="skeleton skeleton--card" />
+              </div>
+              <span className="skeleton skeleton--feed" />
             </div>
           )}
-          <div className="stat-grid stat-grid--main">
-            <div className="stat-card">
-              <div className="stat-card__label">Download</div>
-              <div className="stat-card__value">
-                {renderThroughput(dlBps, stepErrors.dl)}
+          <div className="panel__content" aria-hidden={isRunning}>
+            <div className="panel-header">
+              <div>
+                <h2 className="panel-title">Speed Test</h2>
+                <span className="panel-subtitle">DL/UL ~6s/5s + RTT</span>
+              </div>
+              <div className="test-progress">
+                <span className="test-progress__label">{status.label}</span>
+                <span className="test-progress__meter">
+                  Step {Math.min(status.step, TOTAL_STEPS)} / {TOTAL_STEPS}
+                </span>
               </div>
             </div>
-            <div className="stat-card">
-              <div className="stat-card__label">Upload</div>
-              <div className="stat-card__value">
-                {renderThroughput(ulBps, stepErrors.ul)}
+            {Object.values(stepErrors).some(Boolean) && (
+              <div className="test-progress__errors">
+                {stepErrors.dl && <div>Download error: {stepErrors.dl}</div>}
+                {stepErrors.ul && <div>Upload error: {stepErrors.ul}</div>}
+                {stepErrors.rtt && <div>Latency error: {stepErrors.rtt}</div>}
+              </div>
+            )}
+            <div className="stat-grid stat-grid--main">
+              <div className="stat-card">
+                <div className="stat-card__label">Download</div>
+                <div className="stat-card__value">
+                  {renderThroughput(dlBps, stepErrors.dl)}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-card__label">Upload</div>
+                <div className="stat-card__value">
+                  {renderThroughput(ulBps, stepErrors.ul)}
+                </div>
               </div>
             </div>
+            <div className="stat-grid stat-grid--details">
+              <div className="stat-card">
+                <div className="stat-card__label">Latency</div>
+                <div className="stat-card__value">
+                  {renderLatencyMetric(latencyMs, stepErrors.rtt, (value) => `${value.toFixed(0)} ms`)}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-card__label">Jitter</div>
+                <div className="stat-card__value">
+                  {renderLatencyMetric(jitterMs, stepErrors.rtt, (value) => `${value.toFixed(0)} ms`)}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-card__label">Loss</div>
+                <div className="stat-card__value">
+                  {renderLatencyMetric(lossPct, stepErrors.rtt, (value) => `${value.toFixed(1)} %`)}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-card__label">Samples</div>
+                <div className="stat-card__value">
+                  {samples.dl || samples.ul || samples.rtt ? `${samples.dl}/${samples.ul}/${samples.rtt}` : '—'}
+                </div>
+              </div>
+            </div>
+            {progressDetails.length > 0 && (
+              <div className="progress-feed">
+                <h4 className="progress-feed__title">Live progress</h4>
+                <ul className="progress-feed__list">
+                  {progressDetails.map((entry) => (
+                    <li key={entry.id} className="progress-feed__item">
+                      <span className="progress-feed__timestamp">{entry.timestamp.toFixed(1)}s</span>
+                      <span className="progress-feed__message">{entry.message}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
-          <div className="stat-grid stat-grid--details">
-            <div className="stat-card">
-              <div className="stat-card__label">Latency</div>
-              <div className="stat-card__value">
-                {renderLatencyMetric(latencyMs, stepErrors.rtt, (value) => `${value.toFixed(0)} ms`)}
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-card__label">Jitter</div>
-              <div className="stat-card__value">
-                {renderLatencyMetric(jitterMs, stepErrors.rtt, (value) => `${value.toFixed(0)} ms`)}
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-card__label">Loss</div>
-              <div className="stat-card__value">
-                {renderLatencyMetric(lossPct, stepErrors.rtt, (value) => `${value.toFixed(1)} %`)}
-              </div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-card__label">Samples</div>
-              <div className="stat-card__value">
-                {samples.dl || samples.ul || samples.rtt ? `${samples.dl}/${samples.ul}/${samples.rtt}` : '—'}
-              </div>
-            </div>
-          </div>
-          {progressDetails.length > 0 && (
-            <div className="progress-feed">
-              <h4 className="progress-feed__title">Live progress</h4>
-              <ul className="progress-feed__list">
-                {progressDetails.map((entry) => (
-                  <li key={entry.id} className="progress-feed__item">
-                    <span className="progress-feed__timestamp">{entry.timestamp.toFixed(1)}s</span>
-                    <span className="progress-feed__message">{entry.message}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
         </section>
 
         <div className="info-grid">
@@ -925,69 +956,87 @@ export default function NetworkCapabilityTester() {
           </section>
         </div>
 
-        <section className="panel panel--subtle">
-          <h3 className="panel-heading">Can I…?</h3>
-          <div className="capabilities-grid">
-            {caps.length === 0 && (
-              <p className="empty-message">
-                Run the test for recommendations.
-              </p>
-            )}
-            {caps.map((capability) => {
-              const blockedOption = capability.options?.find(
-                (option) => option.status === false && option.limiting.length > 0,
-              );
-              return (
-                <div
-                  key={capability.key}
-                  className="capability-item"
-                >
-                  <span className="capability-icon">
-                    {capability.ok === true ? '✅' : capability.ok === false ? '❌' : '❔'}
-                  </span>
-                  <div className="capability-text">
-                    <div className="capability-name">{capability.key}</div>
-                    <div className="capability-desc">
-                      {capability.why}
+        <section className={`panel panel--subtle ${isRunning ? 'panel--loading' : ''}`}>
+          {isRunning && (
+            <div className="panel-skeleton panel-skeleton--capabilities" aria-hidden="true">
+              <span className="skeleton skeleton--heading" />
+              <div className="panel-skeleton__list">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <div key={index} className="panel-skeleton__list-item">
+                    <span className="skeleton skeleton--icon" />
+                    <div className="panel-skeleton__list-text">
+                      <span className="skeleton skeleton--text" />
+                      <span className="skeleton skeleton--subtext" />
                     </div>
-                    {capability.options?.length > 0 && (
-                      <div className="capability-options">
-                        {capability.options.map((option) => (
-                          <span
-                            key={option.key}
-                            className={`capability-pill ${
-                              option.status === true
-                                ? 'capability-pill--available'
-                                : option.status == null
-                                  ? 'capability-pill--unknown'
-                                  : 'capability-pill--unavailable'
-                            }`}
-                            title={option.detail}
-                          >
-                            {option.label}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {capability.ok === null && capability.missing.length > 0 && (
-                      <div className="capability-note">
-                        Missing {formatMissingMeasurements(capability.missing)}.
-                      </div>
-                    )}
-                    {capability.ok === false && capability.limiting.length > 0 && (
-                      <div className="capability-note">
-                        Limited by {formatList(capability.limiting)}.
-                      </div>
-                    )}
-                    {capability.ok === true && blockedOption && (
-                      <div className="capability-note">
-                        Higher tiers limited by {formatList(blockedOption.limiting)}.
-                      </div>
-                    )}
                   </div>
-                </div>
-              );
-            })}
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="panel__content" aria-hidden={isRunning}>
+            <h3 className="panel-heading">Can I…?</h3>
+            <div className="capabilities-grid">
+              {caps.length === 0 && (
+                <p className="empty-message">
+                  Run the test for recommendations.
+                </p>
+              )}
+              {caps.map((capability) => {
+                const blockedOption = capability.options?.find(
+                  (option) => option.status === false && option.limiting.length > 0,
+                );
+                return (
+                  <div
+                    key={capability.key}
+                    className="capability-item"
+                  >
+                    <span className="capability-icon">
+                      {capability.ok === true ? '✅' : capability.ok === false ? '❌' : '❔'}
+                    </span>
+                    <div className="capability-text">
+                      <div className="capability-name">{capability.key}</div>
+                      <div className="capability-desc">
+                        {capability.why}
+                      </div>
+                      {capability.options?.length > 0 && (
+                        <div className="capability-options">
+                          {capability.options.map((option) => (
+                            <span
+                              key={option.key}
+                              className={`capability-pill ${
+                                option.status === true
+                                  ? 'capability-pill--available'
+                                  : option.status == null
+                                    ? 'capability-pill--unknown'
+                                    : 'capability-pill--unavailable'
+                              }`}
+                              title={option.detail}
+                            >
+                              {option.label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {capability.ok === null && capability.missing.length > 0 && (
+                        <div className="capability-note">
+                          Missing {formatMissingMeasurements(capability.missing)}.
+                        </div>
+                      )}
+                      {capability.ok === false && capability.limiting.length > 0 && (
+                        <div className="capability-note">
+                          Limited by {formatList(capability.limiting)}.
+                        </div>
+                      )}
+                      {capability.ok === true && blockedOption && (
+                        <div className="capability-note">
+                          Higher tiers limited by {formatList(blockedOption.limiting)}.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </section>
       </div>
