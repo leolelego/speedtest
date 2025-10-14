@@ -1,6 +1,8 @@
 # speedtest
 
 > A Speed test application for remote worker in there home, coffee shop or van
+
+
 This repository contains a Vite + React single-page application configured for deployment on GitHub Pages.
 
 ## Code Methology
@@ -9,8 +11,6 @@ This project is also a way to learn how to use tool like ChatGPT Canevas or Open
 ## Getting started
 
 This repository contains a Vite + React single-page application configured for deployment on GitHub Pages.
-
-## Getting started
 
 ```bash
 npm install
@@ -26,13 +26,3 @@ npm run build
 ```
 
 The build output is written to the `dist/` directory.
-
-## Deploying to GitHub Pages
-
-The project uses the [`gh-pages`](https://github.com/tschaub/gh-pages) package to publish the production build to the `gh-pages` branch.
-
-```bash
-npm run deploy
-```
-
-Before deploying, ensure the repository is hosted at `https://<username>.github.io/speedtest/` so the configured Vite base path works correctly.
