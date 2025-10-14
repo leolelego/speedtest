@@ -52,6 +52,24 @@
   text-transform: uppercase;
 }
 
+.test-progress {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.75rem;
+}
+
+.test-progress__label {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.test-progress__meter {
+  font-variant-numeric: tabular-nums;
+}
+
 .stat-grid {
   display: grid;
   gap: 0.75rem;
