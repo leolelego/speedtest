@@ -138,17 +138,33 @@ export default function NetworkCapabilityTester() {
     fetchIPInfo();
   }, [fetchIPInfo]);
 
-  const registerAborter = (controller) => {
+  const registerAborter = useCallback((controller) => {
     abortersRef.current.push(controller);
     return () => {
       abortersRef.current = abortersRef.current.filter((item) => item !== controller);
     };
-  };
+  }, []);
 
-  const resetAborters = () => {
+  const resetAborters = useCallback(() => {
     abortersRef.current.forEach((aborter) => aborter.abort());
     abortersRef.current = [];
-  };
+  }, []);
+
+  const handleTestError = useCallback(
+    (error) => {
+      const isError = error instanceof Error;
+      const message = isError && error.message ? error.message : 'Unknown error occurred.';
+      console.error('[SpeedTest] Test failed', error);
+      runningRef.current = false;
+      resetAborters();
+      setIsRunning(false);
+      setStatus({ label: 'Test failed', step: 0 });
+      if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+        window.alert(`Speed test failed: ${message}`);
+      }
+    },
+    [resetAborters],
+  );
 
   const measureDownload = useCallback(async () => {
     const controller = new AbortController();
@@ -161,6 +177,7 @@ export default function NetworkCapabilityTester() {
     let count = 0;
     let inFlight = 0;
     const MAX_PAR = 6;
+    let lastError = null;
 
     async function pump() {
       while (performance.now() < end && runningRef.current) {
@@ -174,11 +191,22 @@ export default function NetworkCapabilityTester() {
             `${DOWNLOAD_SOURCES[0](2 ** 20 * 8)}&cacheBust=${Math.random()}`,
             { signal: controller.signal, cache: 'no-store' },
           );
+          if (!response.ok) {
+            throw new Error(
+              response.status === 429
+                ? 'Download test was rate limited (HTTP 429).'
+                : `Download request failed with status ${response.status}.`,
+            );
+          }
           const arrayBuffer = await response.arrayBuffer();
           bytes += arrayBuffer.byteLength;
           count += 1;
-        } catch {
-          // ignore individual request failures
+          lastError = null;
+        } catch (error) {
+          if (error?.name === 'AbortError') {
+            return;
+          }
+          lastError = error instanceof Error ? error : new Error('Download request failed.');
         } finally {
           inFlight -= 1;
         }
@@ -193,11 +221,15 @@ export default function NetworkCapabilityTester() {
     controller.abort();
     unregister();
 
+    if (bytes === 0 && lastError) {
+      throw lastError;
+    }
+
     return {
       bps: (bytes * 8) / ((performance.now() - start) / 1000),
       count,
     };
-  }, []);
+  }, [registerAborter]);
 
   const measureUpload = useCallback(async () => {
     const controller = new AbortController();
@@ -210,6 +242,7 @@ export default function NetworkCapabilityTester() {
     let count = 0;
     let inFlight = 0;
     const MAX_PAR = 4;
+    let lastError = null;
 
     const payload = new Uint8Array(2 ** 20 * 2);
     if (window.crypto?.getRandomValues) {
@@ -233,11 +266,22 @@ export default function NetworkCapabilityTester() {
               'Content-Type': 'application/octet-stream',
             },
           });
+          if (!response.ok) {
+            throw new Error(
+              response.status === 429
+                ? 'Upload test was rate limited (HTTP 429).'
+                : `Upload request failed with status ${response.status}.`,
+            );
+          }
           await response.arrayBuffer();
           bytes += payload.byteLength;
           count += 1;
-        } catch {
-          // ignore individual request failures
+          lastError = null;
+        } catch (error) {
+          if (error?.name === 'AbortError') {
+            return;
+          }
+          lastError = error instanceof Error ? error : new Error('Upload request failed.');
         } finally {
           inFlight -= 1;
         }
@@ -252,17 +296,22 @@ export default function NetworkCapabilityTester() {
     controller.abort();
     unregister();
 
+    if (bytes === 0 && lastError) {
+      throw lastError;
+    }
+
     return {
       bps: (bytes * 8) / ((performance.now() - start) / 1000),
       count,
     };
-  }, []);
+  }, [registerAborter]);
 
   const measureLatency = useCallback(async () => {
     const controller = new AbortController();
     const unregister = registerAborter(controller);
     const durations = [];
     let drops = 0;
+    let lastError = null;
 
     for (let index = 0; index < RTT_PINGS; index += 1) {
       if (!runningRef.current) break;
@@ -272,10 +321,23 @@ export default function NetworkCapabilityTester() {
           cache: 'no-store',
           signal: controller.signal,
         });
+        if (!response.ok) {
+          throw new Error(
+            response.status === 429
+              ? 'Latency test was rate limited (HTTP 429).'
+              : `Latency request failed with status ${response.status}.`,
+          );
+        }
         await response.arrayBuffer();
         durations.push(performance.now() - start);
-      } catch {
+        lastError = null;
+      } catch (error) {
+        if (error?.name === 'AbortError') {
+          lastError = null;
+          break;
+        }
         drops += 1;
+        lastError = error instanceof Error ? error : new Error('Latency request failed.');
       }
       if (!runningRef.current) break;
       await sleep(120);
@@ -288,13 +350,17 @@ export default function NetworkCapabilityTester() {
     controller.abort();
     unregister();
 
+    if (durations.length === 0 && lastError) {
+      throw lastError;
+    }
+
     return {
       avg: average,
       jit: jitter,
       loss,
       count: durations.length,
     };
-  }, []);
+  }, [registerAborter]);
 
   const startTests = useCallback(async () => {
     if (runningRef.current) return;
@@ -312,57 +378,61 @@ export default function NetworkCapabilityTester() {
     setLossPct(null);
     setSamples({ dl: 0, ul: 0, rtt: 0 });
 
-    setStatus({ label: 'Measuring download speed…', step: 1 });
-    console.info('[SpeedTest] Measuring download throughput');
-    const download = await measureDownload();
-    console.info('[SpeedTest] Download test finished', {
-      megabitsPerSecond: download.bps / 1e6,
-      requestsCompleted: download.count,
-    });
-    if (!runningRef.current) {
-      console.info('[SpeedTest] Download measurement aborted');
-      return;
-    }
-    setDlBps(download.bps);
-    setSamples((previous) => ({ ...previous, dl: download.count }));
+    try {
+      setStatus({ label: 'Measuring download speed…', step: 1 });
+      console.info('[SpeedTest] Measuring download throughput');
+      const download = await measureDownload();
+      console.info('[SpeedTest] Download test finished', {
+        megabitsPerSecond: download.bps / 1e6,
+        requestsCompleted: download.count,
+      });
+      if (!runningRef.current) {
+        console.info('[SpeedTest] Download measurement aborted');
+        return;
+      }
+      setDlBps(download.bps);
+      setSamples((previous) => ({ ...previous, dl: download.count }));
 
-    setStatus({ label: 'Measuring upload speed…', step: 2 });
-    console.info('[SpeedTest] Measuring upload throughput');
-    const upload = await measureUpload();
-    console.info('[SpeedTest] Upload test finished', {
-      megabitsPerSecond: upload.bps / 1e6,
-      requestsCompleted: upload.count,
-    });
-    if (!runningRef.current) {
-      console.info('[SpeedTest] Upload measurement aborted');
-      return;
-    }
-    setUlBps(upload.bps);
-    setSamples((previous) => ({ ...previous, ul: upload.count }));
+      setStatus({ label: 'Measuring upload speed…', step: 2 });
+      console.info('[SpeedTest] Measuring upload throughput');
+      const upload = await measureUpload();
+      console.info('[SpeedTest] Upload test finished', {
+        megabitsPerSecond: upload.bps / 1e6,
+        requestsCompleted: upload.count,
+      });
+      if (!runningRef.current) {
+        console.info('[SpeedTest] Upload measurement aborted');
+        return;
+      }
+      setUlBps(upload.bps);
+      setSamples((previous) => ({ ...previous, ul: upload.count }));
 
-    setStatus({ label: 'Measuring latency & quality…', step: 3 });
-    console.info('[SpeedTest] Measuring latency, jitter, and loss');
-    const latency = await measureLatency();
-    console.info('[SpeedTest] Latency test finished', {
-      averageLatencyMs: latency.avg,
-      jitterMs: latency.jit,
-      lossPercent: latency.loss,
-      samplesCollected: latency.count,
-    });
-    if (!runningRef.current) {
-      console.info('[SpeedTest] Latency measurement aborted');
-      return;
-    }
-    setLatencyMs(latency.avg);
-    setJitterMs(latency.jit);
-    setLossPct(latency.loss);
-    setSamples((previous) => ({ ...previous, rtt: latency.count }));
+      setStatus({ label: 'Measuring latency & quality…', step: 3 });
+      console.info('[SpeedTest] Measuring latency, jitter, and loss');
+      const latency = await measureLatency();
+      console.info('[SpeedTest] Latency test finished', {
+        averageLatencyMs: latency.avg,
+        jitterMs: latency.jit,
+        lossPercent: latency.loss,
+        samplesCollected: latency.count,
+      });
+      if (!runningRef.current) {
+        console.info('[SpeedTest] Latency measurement aborted');
+        return;
+      }
+      setLatencyMs(latency.avg);
+      setJitterMs(latency.jit);
+      setLossPct(latency.loss);
+      setSamples((previous) => ({ ...previous, rtt: latency.count }));
 
-    runningRef.current = false;
-    setIsRunning(false);
-    setStatus({ label: 'Test complete', step: TOTAL_STEPS });
-    console.info('[SpeedTest] Test completed successfully');
-  }, [measureDownload, measureLatency, measureUpload]);
+      runningRef.current = false;
+      setIsRunning(false);
+      setStatus({ label: 'Test complete', step: TOTAL_STEPS });
+      console.info('[SpeedTest] Test completed successfully');
+    } catch (error) {
+      handleTestError(error);
+    }
+  }, [handleTestError, measureDownload, measureLatency, measureUpload, resetAborters]);
 
   const stopTests = useCallback(() => {
     runningRef.current = false;
@@ -370,7 +440,7 @@ export default function NetworkCapabilityTester() {
     resetAborters();
     setStatus({ label: 'Test stopped', step: 0 });
     console.warn('[SpeedTest] Test manually stopped');
-  }, []);
+  }, [resetAborters]);
 
   const caps = useMemo(() => {
     if (dlBps == null || ulBps == null || latencyMs == null || lossPct == null) return [];
