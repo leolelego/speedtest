@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import './App.css';
 
 const DOWNLOAD_SOURCES = [
   (bytes) => `https://speed.cloudflare.com/__down?bytes=${bytes}`,
@@ -328,105 +329,105 @@ export default function NetworkCapabilityTester() {
   }, [dlBps, jitterMs, latencyMs, lossPct, ulBps]);
 
   return (
-    <div className="min-h-screen bg-white text-black dark:bg-black dark:text-white pb-24 transition-colors">
-      <div className="max-w-xl mx-auto p-3">
-        <section className="rounded-2xl p-3 shadow-sm bg-gray-100 dark:bg-[#111]">
-          <div className="mb-2 flex items-center justify-between">
-            <h2 className="text-base font-semibold">Speed Test</h2>
-            <span className="text-[11px] text-gray-500">DL/UL ~8s/5s + RTT</span>
+    <div className="app-root">
+      <div className="app-container">
+        <section className="panel panel--elevated">
+          <div className="panel-header">
+            <h2 className="panel-title">Speed Test</h2>
+            <span className="panel-subtitle">DL/UL ~8s/5s + RTT</span>
           </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-xl bg-gray-200 p-2 text-center dark:bg-[#1a1a1a]">
-              <div className="text-xs text-gray-600 dark:text-gray-300">Download</div>
-              <div className="text-lg font-semibold">{dlBps == null ? '—' : fmtMbps(dlBps)}</div>
+          <div className="stat-grid stat-grid--main">
+            <div className="stat-card">
+              <div className="stat-card__label">Download</div>
+              <div className="stat-card__value">{dlBps == null ? '—' : fmtMbps(dlBps)}</div>
             </div>
-            <div className="rounded-xl bg-gray-200 p-2 text-center dark:bg-[#1a1a1a]">
-              <div className="text-xs text-gray-600 dark:text-gray-300">Upload</div>
-              <div className="text-lg font-semibold">{ulBps == null ? '—' : fmtMbps(ulBps)}</div>
+            <div className="stat-card">
+              <div className="stat-card__label">Upload</div>
+              <div className="stat-card__value">{ulBps == null ? '—' : fmtMbps(ulBps)}</div>
             </div>
           </div>
-          <div className="mt-2 grid grid-cols-4 gap-2 text-center">
-            <div className="rounded-lg bg-gray-200 p-2 dark:bg-[#1a1a1a]">
-              <div className="text-[11px] text-gray-600 dark:text-gray-300">Latency</div>
-              <div className="text-base font-semibold">
+          <div className="stat-grid stat-grid--details">
+            <div className="stat-card">
+              <div className="stat-card__label">Latency</div>
+              <div className="stat-card__value">
                 {latencyMs == null ? '—' : `${latencyMs.toFixed(0)} ms`}
               </div>
             </div>
-            <div className="rounded-lg bg-gray-200 p-2 dark:bg-[#1a1a1a]">
-              <div className="text-[11px] text-gray-600 dark:text-gray-300">Jitter</div>
-              <div className="text-base font-semibold">
+            <div className="stat-card">
+              <div className="stat-card__label">Jitter</div>
+              <div className="stat-card__value">
                 {jitterMs == null ? '—' : `${jitterMs.toFixed(0)} ms`}
               </div>
             </div>
-            <div className="rounded-lg bg-gray-200 p-2 dark:bg-[#1a1a1a]">
-              <div className="text-[11px] text-gray-600 dark:text-gray-300">Loss</div>
-              <div className="text-base font-semibold">
+            <div className="stat-card">
+              <div className="stat-card__label">Loss</div>
+              <div className="stat-card__value">
                 {lossPct == null ? '—' : `${lossPct.toFixed(1)} %`}
               </div>
             </div>
-            <div className="rounded-lg bg-gray-200 p-2 dark:bg-[#1a1a1a]">
-              <div className="text-[11px] text-gray-600 dark:text-gray-300">Samples</div>
-              <div className="text-base font-semibold">
+            <div className="stat-card">
+              <div className="stat-card__label">Samples</div>
+              <div className="stat-card__value">
                 {samples.dl || samples.ul || samples.rtt ? `${samples.dl}/${samples.ul}/${samples.rtt}` : '—'}
               </div>
             </div>
           </div>
         </section>
 
-        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <section className="rounded-2xl bg-gray-100 p-3 dark:bg-[#111]">
-            <h3 className="mb-1 text-sm font-semibold">Network</h3>
-            <div className="space-y-0.5 text-xs">
+        <div className="info-grid">
+          <section className="panel panel--subtle">
+            <h3 className="panel-heading">Network</h3>
+            <div className="info-list">
               <div>
-                <span className="font-medium">Type:</span> {netInfo.effectiveType}
+                <span className="info-list__label">Type:</span> {netInfo.effectiveType}
               </div>
               <div>
-                <span className="font-medium">Downlink:</span> {netInfo.downlink}
+                <span className="info-list__label">Downlink:</span> {netInfo.downlink}
               </div>
               <div>
-                <span className="font-medium">RTT:</span> {netInfo.rtt}
+                <span className="info-list__label">RTT:</span> {netInfo.rtt}
               </div>
             </div>
           </section>
-          <section className="rounded-2xl bg-gray-100 p-3 dark:bg-[#111]">
-            <h3 className="mb-1 text-sm font-semibold">IP &amp; Location</h3>
-            <div className="space-y-0.5 text-xs">
+          <section className="panel panel--subtle">
+            <h3 className="panel-heading">IP &amp; Location</h3>
+            <div className="info-list">
               <div>
-                <span className="font-medium">IP:</span> {ipInfo.ip}
+                <span className="info-list__label">IP:</span> {ipInfo.ip}
               </div>
               <div>
-                <span className="font-medium">City:</span> {ipInfo.city}
+                <span className="info-list__label">City:</span> {ipInfo.city}
               </div>
               <div>
-                <span className="font-medium">Region:</span> {ipInfo.region}
+                <span className="info-list__label">Region:</span> {ipInfo.region}
               </div>
               <div>
-                <span className="font-medium">Country:</span> {ipInfo.country}
+                <span className="info-list__label">Country:</span> {ipInfo.country}
               </div>
               <div>
-                <span className="font-medium">ISP:</span> {ipInfo.org}
+                <span className="info-list__label">ISP:</span> {ipInfo.org}
               </div>
             </div>
           </section>
         </div>
 
-        <section className="mt-2 rounded-2xl bg-gray-100 p-3 dark:bg-[#111]">
-          <h3 className="mb-1 text-sm font-semibold">Can I…?</h3>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <section className="panel panel--subtle">
+          <h3 className="panel-heading">Can I…?</h3>
+          <div className="capabilities-grid">
             {caps.length === 0 && (
-              <p className="text-xs text-gray-600 dark:text-gray-400">
+              <p className="empty-message">
                 Run the test for recommendations.
               </p>
             )}
             {caps.map((capability) => (
               <div
                 key={capability.key}
-                className="flex items-center gap-2 rounded-lg border border-gray-300 p-2 dark:border-[#222]"
+                className="capability-item"
               >
-                <span className="text-base">{capability.ok ? '✅' : '❌'}</span>
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">{capability.key}</div>
-                  <div className="truncate text-[11px] text-gray-600 dark:text-gray-400">
+                <span className="capability-icon">{capability.ok ? '✅' : '❌'}</span>
+                <div className="capability-text">
+                  <div className="capability-name">{capability.key}</div>
+                  <div className="capability-desc">
                     {capability.why}
                   </div>
                 </div>
@@ -436,14 +437,12 @@ export default function NetworkCapabilityTester() {
         </section>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 border-t border-gray-200 bg-white dark:border-[#222] dark:bg-black">
-        <div className="mx-auto max-w-xl px-3 pb-6">
+      <div className="app-footer">
+        <div className="app-footer__inner">
           <button
             type="button"
             onClick={isRunning ? stopTests : startTests}
-            className={`my-2 w-full rounded-2xl py-4 text-lg font-semibold shadow-lg transition active:scale-95 ${
-              isRunning ? 'bg-red-600 text-white' : 'bg-indigo-600 text-white'
-            }`}
+            className={`action-button ${isRunning ? 'action-button--stop' : 'action-button--start'}`}
           >
             {isRunning ? 'Stop' : 'Run test'}
           </button>
