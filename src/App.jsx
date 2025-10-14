@@ -20,39 +20,74 @@ const stddev = (arr) => {
   return Math.sqrt(variance);
 };
 
-function rateCapabilities({ dlMbps, ulMbps, rtt, jitter, loss }) {
-  return [
+function rateCapabilities({ dlMbps, ulMbps, rtt, loss }) {
+  const specs = [
     {
       key: 'Teams audio',
-      ok: dlMbps >= 0.3 && ulMbps >= 0.3 && rtt <= 200 && loss <= 5,
+      thresholds: { minDl: 0.3, minUl: 0.3, maxRtt: 200, maxLoss: 5 },
       why: '≥0.3/0.3 Mbps, RTT ≤200ms',
     },
     {
       key: 'Teams video 720p',
-      ok: dlMbps >= 1.5 && ulMbps >= 1 && rtt <= 150 && loss <= 3,
+      thresholds: { minDl: 1.5, minUl: 1, maxRtt: 150, maxLoss: 3 },
       why: '≥1.5/1 Mbps, RTT ≤150ms',
     },
     {
       key: 'Streaming 1080p',
-      ok: dlMbps >= 5 && loss <= 3,
+      thresholds: { minDl: 5, maxLoss: 3 },
       why: '≥5 Mbps down',
     },
     {
       key: 'Streaming 4K',
-      ok: dlMbps >= 25 && loss <= 2,
+      thresholds: { minDl: 25, maxLoss: 2 },
       why: '≥25 Mbps down',
     },
     {
       key: 'GeForce NOW 1080p60',
-      ok: dlMbps >= 25 && rtt <= 40 && loss <= 1.5,
+      thresholds: { minDl: 25, maxRtt: 40, maxLoss: 1.5 },
       why: '≥25 Mbps, RTT ≤40ms',
     },
     {
       key: 'GeForce NOW 720p60',
-      ok: dlMbps >= 15 && rtt <= 80 && loss <= 2.5,
+      thresholds: { minDl: 15, maxRtt: 80, maxLoss: 2.5 },
       why: '≥15 Mbps, RTT ≤80ms',
     },
   ];
+
+  const toCheck = (label, value, predicate) => {
+    if (value == null || Number.isNaN(value)) {
+      return { label, status: null };
+    }
+    return { label, status: predicate(value) };
+  };
+
+  return specs.map((spec) => {
+    const checks = [
+      spec.thresholds.minDl != null
+        ? toCheck('download speed', dlMbps, (value) => value >= spec.thresholds.minDl)
+        : null,
+      spec.thresholds.minUl != null
+        ? toCheck('upload speed', ulMbps, (value) => value >= spec.thresholds.minUl)
+        : null,
+      spec.thresholds.maxRtt != null
+        ? toCheck('latency', rtt, (value) => value <= spec.thresholds.maxRtt)
+        : null,
+      spec.thresholds.maxLoss != null
+        ? toCheck('packet loss', loss, (value) => value <= spec.thresholds.maxLoss)
+        : null,
+    ].filter(Boolean);
+
+    const missing = checks.filter((check) => check.status == null).map((check) => check.label);
+    const failed = checks.some((check) => check.status === false);
+    const ok = failed ? false : missing.length > 0 ? null : true;
+
+    return {
+      key: spec.key,
+      ok,
+      why: spec.why,
+      missing,
+    };
+  });
 }
 
 export default function NetworkCapabilityTester() {
@@ -62,11 +97,6 @@ export default function NetworkCapabilityTester() {
     region: '—',
     country: '—',
     org: '—',
-  });
-  const [netInfo, setNetInfo] = useState({
-    effectiveType: '—',
-    downlink: '—',
-    rtt: '—',
   });
 
   const [dlBps, setDlBps] = useState(null);
@@ -114,27 +144,6 @@ export default function NetworkCapabilityTester() {
     } catch {
       setIpInfo((previous) => ({ ...previous, ip: 'Failed' }));
     }
-  }, []);
-
-  useEffect(() => {
-    const connection =
-      navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-
-    if (!connection) {
-      setNetInfo({ effectiveType: 'n/a', downlink: 'n/a', rtt: 'n/a' });
-      return undefined;
-    }
-
-    const updateConnection = () =>
-      setNetInfo({
-        effectiveType: connection.effectiveType || '—',
-        downlink: connection.downlink ? `${connection.downlink} Mbps` : '—',
-        rtt: connection.rtt ? `${connection.rtt} ms` : '—',
-      });
-
-    updateConnection();
-    connection.addEventListener('change', updateConnection);
-    return () => connection.removeEventListener('change', updateConnection);
   }, []);
 
   useEffect(() => {
@@ -592,25 +601,17 @@ export default function NetworkCapabilityTester() {
   }, [logProgress, resetAborters]);
 
   const caps = useMemo(() => {
-    if (
-      dlBps == null ||
-      ulBps == null ||
-      latencyMs == null ||
-      lossPct == null ||
-      stepErrors.dl ||
-      stepErrors.ul ||
-      stepErrors.rtt
-    ) {
+    const hasAnyMeasurements = [dlBps, ulBps, latencyMs, lossPct].some((value) => value != null);
+    if (!hasAnyMeasurements && !stepErrors.dl && !stepErrors.ul && !stepErrors.rtt) {
       return [];
     }
     return rateCapabilities({
-      dlMbps: dlBps / 1e6,
-      ulMbps: ulBps / 1e6,
+      dlMbps: dlBps != null ? dlBps / 1e6 : null,
+      ulMbps: ulBps != null ? ulBps / 1e6 : null,
       rtt: latencyMs,
-      jitter: jitterMs ?? 0,
       loss: lossPct,
     });
-  }, [dlBps, jitterMs, latencyMs, lossPct, stepErrors.dl, stepErrors.rtt, stepErrors.ul, ulBps]);
+  }, [dlBps, latencyMs, lossPct, stepErrors.dl, stepErrors.rtt, stepErrors.ul, ulBps]);
 
   useEffect(() => {
     if (!isRunning && caps.length > 0) {
@@ -628,6 +629,17 @@ export default function NetworkCapabilityTester() {
     if (error) return 'Not accessible';
     if (value == null) return '—';
     return formatter(value);
+  }, []);
+
+  const formatMissingMeasurements = useCallback((missing) => {
+    if (!missing.length) return '';
+    if (missing.length === 1) {
+      return `${missing[0]} measurement`;
+    }
+    if (missing.length === 2) {
+      return `${missing[0]} and ${missing[1]} measurements`;
+    }
+    return `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]} measurements`;
   }, []);
 
   useEffect(() => {
@@ -719,20 +731,6 @@ export default function NetworkCapabilityTester() {
 
         <div className="info-grid">
           <section className="panel panel--subtle">
-            <h3 className="panel-heading">Network</h3>
-            <div className="info-list">
-              <div>
-                <span className="info-list__label">Type:</span> {netInfo.effectiveType}
-              </div>
-              <div>
-                <span className="info-list__label">Downlink:</span> {netInfo.downlink}
-              </div>
-              <div>
-                <span className="info-list__label">RTT:</span> {netInfo.rtt}
-              </div>
-            </div>
-          </section>
-          <section className="panel panel--subtle">
             <h3 className="panel-heading">IP &amp; Location</h3>
             <div className="info-list">
               <div>
@@ -767,12 +765,19 @@ export default function NetworkCapabilityTester() {
                 key={capability.key}
                 className="capability-item"
               >
-                <span className="capability-icon">{capability.ok ? '✅' : '❌'}</span>
+                <span className="capability-icon">
+                  {capability.ok === true ? '✅' : capability.ok === false ? '❌' : '❔'}
+                </span>
                 <div className="capability-text">
                   <div className="capability-name">{capability.key}</div>
                   <div className="capability-desc">
                     {capability.why}
                   </div>
+                  {capability.ok === null && capability.missing.length > 0 && (
+                    <div className="capability-note">
+                      Missing {formatMissingMeasurements(capability.missing)}.
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
