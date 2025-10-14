@@ -6,7 +6,7 @@ const DOWNLOAD_SOURCES = [
 ];
 const UPLOAD_ENDPOINT = 'https://httpbin.org/post';
 const LATENCY_URL = 'https://speed.cloudflare.com/__down?bytes=16';
-const DL_DURATION_S = 8;
+const DL_DURATION_S = 6;
 const UL_DURATION_S = 5;
 const RTT_PINGS = 12;
 const TOTAL_STEPS = 3;
@@ -75,11 +75,14 @@ export default function NetworkCapabilityTester() {
   const [jitterMs, setJitterMs] = useState(null);
   const [lossPct, setLossPct] = useState(null);
   const [samples, setSamples] = useState({ dl: 0, ul: 0, rtt: 0 });
+  const [stepErrors, setStepErrors] = useState({ dl: null, ul: null, rtt: null });
+  const [progressDetails, setProgressDetails] = useState([]);
 
   const [isRunning, setIsRunning] = useState(false);
   const [status, setStatus] = useState({ label: 'Idle', step: 0 });
   const runningRef = useRef(false);
   const abortersRef = useRef([]);
+  const startTimeRef = useRef(null);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -150,6 +153,21 @@ export default function NetworkCapabilityTester() {
     abortersRef.current = [];
   }, []);
 
+  const logProgress = useCallback((message) => {
+    setProgressDetails((previous) => {
+      const timestamp =
+        startTimeRef.current && typeof performance !== 'undefined'
+          ? (performance.now() - startTimeRef.current) / 1000
+          : 0;
+      const entry = {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        message,
+        timestamp,
+      };
+      return [...previous, entry];
+    });
+  }, []);
+
   const handleTestError = useCallback(
     (error) => {
       const isError = error instanceof Error;
@@ -159,14 +177,15 @@ export default function NetworkCapabilityTester() {
       resetAborters();
       setIsRunning(false);
       setStatus({ label: 'Test failed', step: 0 });
+      logProgress(`❌ Fatal error: ${message}`);
       if (typeof window !== 'undefined' && typeof window.alert === 'function') {
         window.alert(`Speed test failed: ${message}`);
       }
     },
-    [resetAborters],
+    [logProgress, resetAborters],
   );
 
-  const measureDownload = useCallback(async () => {
+  const measureDownload = useCallback(async (onProgress) => {
     const controller = new AbortController();
     const unregister = registerAborter(controller);
 
@@ -178,6 +197,7 @@ export default function NetworkCapabilityTester() {
     let inFlight = 0;
     const MAX_PAR = 6;
     let lastError = null;
+    let lastProgressEmit = start;
 
     async function pump() {
       while (performance.now() < end && runningRef.current) {
@@ -202,6 +222,18 @@ export default function NetworkCapabilityTester() {
           bytes += arrayBuffer.byteLength;
           count += 1;
           lastError = null;
+          const now = performance.now();
+          if (onProgress && now - lastProgressEmit >= 500) {
+            lastProgressEmit = now;
+            const elapsed = (now - start) / 1000;
+            const duration = Math.max(elapsed, 0.001);
+            onProgress({
+              bytes,
+              count,
+              elapsed,
+              bps: (bytes * 8) / duration,
+            });
+          }
         } catch (error) {
           if (error?.name === 'AbortError') {
             return;
@@ -226,12 +258,12 @@ export default function NetworkCapabilityTester() {
     }
 
     return {
-      bps: (bytes * 8) / ((performance.now() - start) / 1000),
+      bps: (bytes * 8) / Math.max((performance.now() - start) / 1000, 0.001),
       count,
     };
   }, [registerAborter]);
 
-  const measureUpload = useCallback(async () => {
+  const measureUpload = useCallback(async (onProgress) => {
     const controller = new AbortController();
     const unregister = registerAborter(controller);
 
@@ -243,6 +275,7 @@ export default function NetworkCapabilityTester() {
     let inFlight = 0;
     const MAX_PAR = 4;
     let lastError = null;
+    let lastProgressEmit = start;
 
     const payload = new Uint8Array(2 ** 20 * 2);
     if (window.crypto?.getRandomValues) {
@@ -277,6 +310,18 @@ export default function NetworkCapabilityTester() {
           bytes += payload.byteLength;
           count += 1;
           lastError = null;
+          const now = performance.now();
+          if (onProgress && now - lastProgressEmit >= 500) {
+            lastProgressEmit = now;
+            const elapsed = (now - start) / 1000;
+            const duration = Math.max(elapsed, 0.001);
+            onProgress({
+              bytes,
+              count,
+              elapsed,
+              bps: (bytes * 8) / duration,
+            });
+          }
         } catch (error) {
           if (error?.name === 'AbortError') {
             return;
@@ -301,12 +346,12 @@ export default function NetworkCapabilityTester() {
     }
 
     return {
-      bps: (bytes * 8) / ((performance.now() - start) / 1000),
+      bps: (bytes * 8) / Math.max((performance.now() - start) / 1000, 0.001),
       count,
     };
   }, [registerAborter]);
 
-  const measureLatency = useCallback(async () => {
+  const measureLatency = useCallback(async (onProgress) => {
     const controller = new AbortController();
     const unregister = registerAborter(controller);
     const durations = [];
@@ -331,6 +376,13 @@ export default function NetworkCapabilityTester() {
         await response.arrayBuffer();
         durations.push(performance.now() - start);
         lastError = null;
+        if (onProgress) {
+          onProgress({
+            count: durations.length,
+            drops,
+            last: durations[durations.length - 1],
+          });
+        }
       } catch (error) {
         if (error?.name === 'AbortError') {
           lastError = null;
@@ -338,6 +390,14 @@ export default function NetworkCapabilityTester() {
         }
         drops += 1;
         lastError = error instanceof Error ? error : new Error('Latency request failed.');
+        if (onProgress) {
+          onProgress({
+            count: durations.length,
+            drops,
+            last: null,
+            error: lastError,
+          });
+        }
       }
       if (!runningRef.current) break;
       await sleep(120);
@@ -377,73 +437,172 @@ export default function NetworkCapabilityTester() {
     setJitterMs(null);
     setLossPct(null);
     setSamples({ dl: 0, ul: 0, rtt: 0 });
+    setStepErrors({ dl: null, ul: null, rtt: null });
+    setProgressDetails([]);
+    startTimeRef.current = typeof performance !== 'undefined' ? performance.now() : null;
+    logProgress('Initializing test environment…');
 
     try {
+      const encounteredErrors = { dl: false, ul: false, rtt: false };
+
       setStatus({ label: 'Measuring download speed…', step: 1 });
+      logProgress('Download test started.');
       console.info('[SpeedTest] Measuring download throughput');
-      const download = await measureDownload();
-      console.info('[SpeedTest] Download test finished', {
-        megabitsPerSecond: download.bps / 1e6,
-        requestsCompleted: download.count,
-      });
+      try {
+        const download = await measureDownload((progress) => {
+          logProgress(
+            `Download progress: ${(progress.bytes / 1e6).toFixed(1)} MB transferred, ${fmtMbps(
+              progress.bps,
+            )}`,
+          );
+        });
+        console.info('[SpeedTest] Download test finished', {
+          megabitsPerSecond: download.bps / 1e6,
+          requestsCompleted: download.count,
+        });
+        if (!runningRef.current) {
+          console.info('[SpeedTest] Download measurement aborted');
+          logProgress('Download measurement aborted.');
+          return;
+        }
+        setDlBps(download.bps);
+        setSamples((previous) => ({ ...previous, dl: download.count }));
+        logProgress('Download test completed successfully.');
+      } catch (error) {
+        encounteredErrors.dl = true;
+        const message = error instanceof Error ? error.message : 'Unknown error.';
+        setStepErrors((previous) => ({ ...previous, dl: message }));
+        logProgress(`⚠️ Download test error: ${message}`);
+        console.warn('[SpeedTest] Download test failed but continuing', error);
+      }
+
       if (!runningRef.current) {
-        console.info('[SpeedTest] Download measurement aborted');
         return;
       }
-      setDlBps(download.bps);
-      setSamples((previous) => ({ ...previous, dl: download.count }));
 
       setStatus({ label: 'Measuring upload speed…', step: 2 });
+      logProgress('Upload test started.');
       console.info('[SpeedTest] Measuring upload throughput');
-      const upload = await measureUpload();
-      console.info('[SpeedTest] Upload test finished', {
-        megabitsPerSecond: upload.bps / 1e6,
-        requestsCompleted: upload.count,
-      });
+      try {
+        const upload = await measureUpload((progress) => {
+          logProgress(
+            `Upload progress: ${(progress.bytes / 1e6).toFixed(1)} MB sent, ${fmtMbps(
+              progress.bps,
+            )}`,
+          );
+        });
+        console.info('[SpeedTest] Upload test finished', {
+          megabitsPerSecond: upload.bps / 1e6,
+          requestsCompleted: upload.count,
+        });
+        if (!runningRef.current) {
+          console.info('[SpeedTest] Upload measurement aborted');
+          logProgress('Upload measurement aborted.');
+          return;
+        }
+        setUlBps(upload.bps);
+        setSamples((previous) => ({ ...previous, ul: upload.count }));
+        logProgress('Upload test completed successfully.');
+      } catch (error) {
+        encounteredErrors.ul = true;
+        const message = error instanceof Error ? error.message : 'Unknown error.';
+        setStepErrors((previous) => ({ ...previous, ul: message }));
+        logProgress(`⚠️ Upload test error: ${message}`);
+        console.warn('[SpeedTest] Upload test failed but continuing', error);
+      }
+
       if (!runningRef.current) {
-        console.info('[SpeedTest] Upload measurement aborted');
         return;
       }
-      setUlBps(upload.bps);
-      setSamples((previous) => ({ ...previous, ul: upload.count }));
 
       setStatus({ label: 'Measuring latency & quality…', step: 3 });
+      logProgress('Latency test started.');
       console.info('[SpeedTest] Measuring latency, jitter, and loss');
-      const latency = await measureLatency();
-      console.info('[SpeedTest] Latency test finished', {
-        averageLatencyMs: latency.avg,
-        jitterMs: latency.jit,
-        lossPercent: latency.loss,
-        samplesCollected: latency.count,
-      });
+      try {
+        const latency = await measureLatency((progress) => {
+          if (progress.error) {
+            logProgress('⚠️ Latency request failed, retrying…');
+            return;
+          }
+          if (progress.last != null) {
+            logProgress(
+              `Latency sample ${progress.count}: ${progress.last.toFixed(1)} ms (${progress.drops} drops)`,
+            );
+          }
+        });
+        console.info('[SpeedTest] Latency test finished', {
+          averageLatencyMs: latency.avg,
+          jitterMs: latency.jit,
+          lossPercent: latency.loss,
+          samplesCollected: latency.count,
+        });
+        if (!runningRef.current) {
+          console.info('[SpeedTest] Latency measurement aborted');
+          logProgress('Latency measurement aborted.');
+          return;
+        }
+        setLatencyMs(latency.avg);
+        setJitterMs(latency.jit);
+        setLossPct(latency.loss);
+        setSamples((previous) => ({ ...previous, rtt: latency.count }));
+        logProgress('Latency test completed successfully.');
+      } catch (error) {
+        encounteredErrors.rtt = true;
+        const message = error instanceof Error ? error.message : 'Unknown error.';
+        setStepErrors((previous) => ({ ...previous, rtt: message }));
+        logProgress(`⚠️ Latency test error: ${message}`);
+        console.warn('[SpeedTest] Latency test failed but continuing', error);
+      }
+
       if (!runningRef.current) {
-        console.info('[SpeedTest] Latency measurement aborted');
         return;
       }
-      setLatencyMs(latency.avg);
-      setJitterMs(latency.jit);
-      setLossPct(latency.loss);
-      setSamples((previous) => ({ ...previous, rtt: latency.count }));
 
+      const hasErrors = encounteredErrors.dl || encounteredErrors.ul || encounteredErrors.rtt;
       runningRef.current = false;
       setIsRunning(false);
-      setStatus({ label: 'Test complete', step: TOTAL_STEPS });
-      console.info('[SpeedTest] Test completed successfully');
+      const finalLabel = hasErrors ? 'Test finished with warnings' : 'Test complete';
+      setStatus({ label: finalLabel, step: TOTAL_STEPS });
+      logProgress(`${finalLabel}.`);
+      if (!hasErrors) {
+        console.info('[SpeedTest] Test completed successfully');
+      } else {
+        console.warn('[SpeedTest] Test completed with warnings');
+      }
     } catch (error) {
       handleTestError(error);
     }
-  }, [handleTestError, measureDownload, measureLatency, measureUpload, resetAborters]);
+  }, [
+    handleTestError,
+    logProgress,
+    measureDownload,
+    measureLatency,
+    measureUpload,
+    resetAborters,
+  ]);
 
   const stopTests = useCallback(() => {
+    if (!runningRef.current) return;
     runningRef.current = false;
     setIsRunning(false);
     resetAborters();
     setStatus({ label: 'Test stopped', step: 0 });
+    logProgress('Test stopped by user.');
     console.warn('[SpeedTest] Test manually stopped');
-  }, [resetAborters]);
+  }, [logProgress, resetAborters]);
 
   const caps = useMemo(() => {
-    if (dlBps == null || ulBps == null || latencyMs == null || lossPct == null) return [];
+    if (
+      dlBps == null ||
+      ulBps == null ||
+      latencyMs == null ||
+      lossPct == null ||
+      stepErrors.dl ||
+      stepErrors.ul ||
+      stepErrors.rtt
+    ) {
+      return [];
+    }
     return rateCapabilities({
       dlMbps: dlBps / 1e6,
       ulMbps: ulBps / 1e6,
@@ -451,13 +610,25 @@ export default function NetworkCapabilityTester() {
       jitter: jitterMs ?? 0,
       loss: lossPct,
     });
-  }, [dlBps, jitterMs, latencyMs, lossPct, ulBps]);
+  }, [dlBps, jitterMs, latencyMs, lossPct, stepErrors.dl, stepErrors.rtt, stepErrors.ul, ulBps]);
 
   useEffect(() => {
     if (!isRunning && caps.length > 0) {
       console.info('[SpeedTest] Capability assessment', caps);
     }
   }, [caps, isRunning]);
+
+  const renderThroughput = useCallback((value, error) => {
+    if (error) return 'Not accessible';
+    if (value == null) return '—';
+    return fmtMbps(value);
+  }, []);
+
+  const renderLatencyMetric = useCallback((value, error, formatter) => {
+    if (error) return 'Not accessible';
+    if (value == null) return '—';
+    return formatter(value);
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -473,42 +644,55 @@ export default function NetworkCapabilityTester() {
       <div className="app-container">
         <section className="panel panel--elevated">
           <div className="panel-header">
-            <h2 className="panel-title">Speed Test</h2>
-            <span className="panel-subtitle">DL/UL ~8s/5s + RTT</span>
+            <div>
+              <h2 className="panel-title">Speed Test</h2>
+              <span className="panel-subtitle">DL/UL ~6s/5s + RTT</span>
+            </div>
+            <div className="test-progress">
+              <span className="test-progress__label">{status.label}</span>
+              <span className="test-progress__meter">
+                Step {Math.min(status.step, TOTAL_STEPS)} / {TOTAL_STEPS}
+              </span>
+            </div>
           </div>
-          <div className="test-progress">
-            <span className="test-progress__label">{status.label}</span>
-            <span className="test-progress__meter">
-              Step {Math.min(status.step, TOTAL_STEPS)} / {TOTAL_STEPS}
-            </span>
-          </div>
+          {Object.values(stepErrors).some(Boolean) && (
+            <div className="test-progress__errors">
+              {stepErrors.dl && <div>Download error: {stepErrors.dl}</div>}
+              {stepErrors.ul && <div>Upload error: {stepErrors.ul}</div>}
+              {stepErrors.rtt && <div>Latency error: {stepErrors.rtt}</div>}
+            </div>
+          )}
           <div className="stat-grid stat-grid--main">
             <div className="stat-card">
               <div className="stat-card__label">Download</div>
-              <div className="stat-card__value">{dlBps == null ? '—' : fmtMbps(dlBps)}</div>
+              <div className="stat-card__value">
+                {renderThroughput(dlBps, stepErrors.dl)}
+              </div>
             </div>
             <div className="stat-card">
               <div className="stat-card__label">Upload</div>
-              <div className="stat-card__value">{ulBps == null ? '—' : fmtMbps(ulBps)}</div>
+              <div className="stat-card__value">
+                {renderThroughput(ulBps, stepErrors.ul)}
+              </div>
             </div>
           </div>
           <div className="stat-grid stat-grid--details">
             <div className="stat-card">
               <div className="stat-card__label">Latency</div>
               <div className="stat-card__value">
-                {latencyMs == null ? '—' : `${latencyMs.toFixed(0)} ms`}
+                {renderLatencyMetric(latencyMs, stepErrors.rtt, (value) => `${value.toFixed(0)} ms`)}
               </div>
             </div>
             <div className="stat-card">
               <div className="stat-card__label">Jitter</div>
               <div className="stat-card__value">
-                {jitterMs == null ? '—' : `${jitterMs.toFixed(0)} ms`}
+                {renderLatencyMetric(jitterMs, stepErrors.rtt, (value) => `${value.toFixed(0)} ms`)}
               </div>
             </div>
             <div className="stat-card">
               <div className="stat-card__label">Loss</div>
               <div className="stat-card__value">
-                {lossPct == null ? '—' : `${lossPct.toFixed(1)} %`}
+                {renderLatencyMetric(lossPct, stepErrors.rtt, (value) => `${value.toFixed(1)} %`)}
               </div>
             </div>
             <div className="stat-card">
@@ -518,6 +702,19 @@ export default function NetworkCapabilityTester() {
               </div>
             </div>
           </div>
+          {progressDetails.length > 0 && (
+            <div className="progress-feed">
+              <h4 className="progress-feed__title">Live progress</h4>
+              <ul className="progress-feed__list">
+                {progressDetails.map((entry) => (
+                  <li key={entry.id} className="progress-feed__item">
+                    <span className="progress-feed__timestamp">{entry.timestamp.toFixed(1)}s</span>
+                    <span className="progress-feed__message">{entry.message}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </section>
 
         <div className="info-grid">
