@@ -241,9 +241,13 @@
 .capability-desc {
   font-size: 0.72rem;
   color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+}
+
+.capability-note {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  white-space: normal;
 }
 
 .empty-message {
