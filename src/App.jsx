@@ -9,6 +9,7 @@ const LATENCY_URL = 'https://speed.cloudflare.com/__down?bytes=16';
 const DL_DURATION_S = 8;
 const UL_DURATION_S = 5;
 const RTT_PINGS = 12;
+const TOTAL_STEPS = 3;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const fmtMbps = (bps) => `${(bps / 1e6).toFixed(2)} Mbps`;
@@ -76,6 +77,7 @@ export default function NetworkCapabilityTester() {
   const [samples, setSamples] = useState({ dl: 0, ul: 0, rtt: 0 });
 
   const [isRunning, setIsRunning] = useState(false);
+  const [status, setStatus] = useState({ label: 'Idle', step: 0 });
   const runningRef = useRef(false);
   const abortersRef = useRef([]);
 
@@ -136,6 +138,13 @@ export default function NetworkCapabilityTester() {
     fetchIPInfo();
   }, [fetchIPInfo]);
 
+  const registerAborter = (controller) => {
+    abortersRef.current.push(controller);
+    return () => {
+      abortersRef.current = abortersRef.current.filter((item) => item !== controller);
+    };
+  };
+
   const resetAborters = () => {
     abortersRef.current.forEach((aborter) => aborter.abort());
     abortersRef.current = [];
@@ -143,7 +152,7 @@ export default function NetworkCapabilityTester() {
 
   const measureDownload = useCallback(async () => {
     const controller = new AbortController();
-    abortersRef.current.push(controller);
+    const unregister = registerAborter(controller);
 
     const start = performance.now();
     const end = start + DL_DURATION_S * 1000;
@@ -182,6 +191,7 @@ export default function NetworkCapabilityTester() {
     ]);
 
     controller.abort();
+    unregister();
 
     return {
       bps: (bytes * 8) / ((performance.now() - start) / 1000),
@@ -191,7 +201,7 @@ export default function NetworkCapabilityTester() {
 
   const measureUpload = useCallback(async () => {
     const controller = new AbortController();
-    abortersRef.current.push(controller);
+    const unregister = registerAborter(controller);
 
     const start = performance.now();
     const end = start + UL_DURATION_S * 1000;
@@ -240,6 +250,7 @@ export default function NetworkCapabilityTester() {
     ]);
 
     controller.abort();
+    unregister();
 
     return {
       bps: (bytes * 8) / ((performance.now() - start) / 1000),
@@ -248,26 +259,34 @@ export default function NetworkCapabilityTester() {
   }, []);
 
   const measureLatency = useCallback(async () => {
+    const controller = new AbortController();
+    const unregister = registerAborter(controller);
     const durations = [];
     let drops = 0;
 
     for (let index = 0; index < RTT_PINGS; index += 1) {
+      if (!runningRef.current) break;
       const start = performance.now();
       try {
         const response = await fetch(`${LATENCY_URL}&cacheBust=${Math.random()}`, {
           cache: 'no-store',
+          signal: controller.signal,
         });
         await response.arrayBuffer();
         durations.push(performance.now() - start);
       } catch {
         drops += 1;
       }
+      if (!runningRef.current) break;
       await sleep(120);
     }
 
     const average = durations.reduce((acc, value) => acc + value, 0) / Math.max(1, durations.length);
     const jitter = durations.length > 1 ? stddev(durations) : 0;
     const loss = (drops / (drops + durations.length)) * 100;
+
+    controller.abort();
+    unregister();
 
     return {
       avg: average,
@@ -280,8 +299,11 @@ export default function NetworkCapabilityTester() {
   const startTests = useCallback(async () => {
     if (runningRef.current) return;
 
+    resetAborters();
     runningRef.current = true;
     setIsRunning(true);
+    setStatus({ label: 'Preparing test…', step: 0 });
+    console.info('[SpeedTest] Starting network capability test');
 
     setDlBps(null);
     setUlBps(null);
@@ -290,18 +312,47 @@ export default function NetworkCapabilityTester() {
     setLossPct(null);
     setSamples({ dl: 0, ul: 0, rtt: 0 });
 
+    setStatus({ label: 'Measuring download speed…', step: 1 });
+    console.info('[SpeedTest] Measuring download throughput');
     const download = await measureDownload();
-    if (!runningRef.current) return;
+    console.info('[SpeedTest] Download test finished', {
+      megabitsPerSecond: download.bps / 1e6,
+      requestsCompleted: download.count,
+    });
+    if (!runningRef.current) {
+      console.info('[SpeedTest] Download measurement aborted');
+      return;
+    }
     setDlBps(download.bps);
     setSamples((previous) => ({ ...previous, dl: download.count }));
 
+    setStatus({ label: 'Measuring upload speed…', step: 2 });
+    console.info('[SpeedTest] Measuring upload throughput');
     const upload = await measureUpload();
-    if (!runningRef.current) return;
+    console.info('[SpeedTest] Upload test finished', {
+      megabitsPerSecond: upload.bps / 1e6,
+      requestsCompleted: upload.count,
+    });
+    if (!runningRef.current) {
+      console.info('[SpeedTest] Upload measurement aborted');
+      return;
+    }
     setUlBps(upload.bps);
     setSamples((previous) => ({ ...previous, ul: upload.count }));
 
+    setStatus({ label: 'Measuring latency & quality…', step: 3 });
+    console.info('[SpeedTest] Measuring latency, jitter, and loss');
     const latency = await measureLatency();
-    if (!runningRef.current) return;
+    console.info('[SpeedTest] Latency test finished', {
+      averageLatencyMs: latency.avg,
+      jitterMs: latency.jit,
+      lossPercent: latency.loss,
+      samplesCollected: latency.count,
+    });
+    if (!runningRef.current) {
+      console.info('[SpeedTest] Latency measurement aborted');
+      return;
+    }
     setLatencyMs(latency.avg);
     setJitterMs(latency.jit);
     setLossPct(latency.loss);
@@ -309,12 +360,16 @@ export default function NetworkCapabilityTester() {
 
     runningRef.current = false;
     setIsRunning(false);
-  }, [measureDownload, measureUpload, measureLatency]);
+    setStatus({ label: 'Test complete', step: TOTAL_STEPS });
+    console.info('[SpeedTest] Test completed successfully');
+  }, [measureDownload, measureLatency, measureUpload]);
 
   const stopTests = useCallback(() => {
     runningRef.current = false;
     setIsRunning(false);
     resetAborters();
+    setStatus({ label: 'Test stopped', step: 0 });
+    console.warn('[SpeedTest] Test manually stopped');
   }, []);
 
   const caps = useMemo(() => {
@@ -328,6 +383,21 @@ export default function NetworkCapabilityTester() {
     });
   }, [dlBps, jitterMs, latencyMs, lossPct, ulBps]);
 
+  useEffect(() => {
+    if (!isRunning && caps.length > 0) {
+      console.info('[SpeedTest] Capability assessment', caps);
+    }
+  }, [caps, isRunning]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      console.info('[SpeedTest] Auto-starting test after initial delay');
+      startTests();
+    }, 2000);
+
+    return () => clearTimeout(timer);
+  }, [startTests]);
+
   return (
     <div className="app-root">
       <div className="app-container">
@@ -335,6 +405,12 @@ export default function NetworkCapabilityTester() {
           <div className="panel-header">
             <h2 className="panel-title">Speed Test</h2>
             <span className="panel-subtitle">DL/UL ~8s/5s + RTT</span>
+          </div>
+          <div className="test-progress">
+            <span className="test-progress__label">{status.label}</span>
+            <span className="test-progress__meter">
+              Step {Math.min(status.step, TOTAL_STEPS)} / {TOTAL_STEPS}
+            </span>
           </div>
           <div className="stat-grid stat-grid--main">
             <div className="stat-card">
