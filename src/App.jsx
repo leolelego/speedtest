@@ -83,6 +83,18 @@ const TOTAL_STEPS = 3;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const fmtMbps = (bps) => `${(bps / 1e6).toFixed(2)} Mbps`;
 const cacheBust = () => Math.random().toString(36).slice(2);
+
+const fillRandomBytes = (array) => {
+  if (typeof window === 'undefined' || !window.crypto?.getRandomValues) {
+    return;
+  }
+
+  const MAX_CHUNK_SIZE = 65536;
+  for (let offset = 0; offset < array.length; offset += MAX_CHUNK_SIZE) {
+    const chunk = array.subarray(offset, Math.min(offset + MAX_CHUNK_SIZE, array.length));
+    window.crypto.getRandomValues(chunk);
+  }
+};
 const withCacheBust = (url) => {
   try {
     const parsed = new URL(url);
@@ -389,9 +401,7 @@ export default function NetworkCapabilityTester() {
     let lastProgressEmit = start;
 
     const payload = new Uint8Array(2 ** 20 * 2);
-    if (window.crypto?.getRandomValues) {
-      window.crypto.getRandomValues(payload);
-    }
+    fillRandomBytes(payload);
 
     let activeTargetIndex = 0;
     let lastNotifiedTarget = -1;
