@@ -4,7 +4,76 @@ import './App.css';
 const DOWNLOAD_SOURCES = [
   (bytes) => `https://speed.cloudflare.com/__down?bytes=${bytes}`,
 ];
-const UPLOAD_ENDPOINT = 'https://httpbin.org/post';
+
+const ENV_UPLOAD_ENDPOINTS = ((import.meta.env?.VITE_UPLOAD_ENDPOINTS ?? import.meta.env?.VITE_UPLOAD_ENDPOINT ?? '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean)
+  .map((url, index) => ({ name: `Custom endpoint ${index + 1}`, url })));
+
+const DEFAULT_UPLOAD_TARGETS = [
+  { name: 'Cloudflare Speed Test', url: 'https://speed.cloudflare.com/__up' },
+  { name: 'Postman Echo', url: 'https://postman-echo.com/post' },
+  { name: 'HTTPBin', url: 'https://httpbin.org/post' },
+];
+
+const UPLOAD_TARGETS = [...ENV_UPLOAD_ENDPOINTS, ...DEFAULT_UPLOAD_TARGETS].filter(
+  (target, index, array) => array.findIndex((item) => item.url === target.url) === index,
+);
+
+const CAPABILITY_GROUPS = [
+  {
+    service: 'Teams',
+    qualities: [
+      {
+        key: 'teams-720p',
+        label: 'Video 720p',
+        detail: '≥1.5/1 Mbps, RTT ≤150ms',
+        thresholds: { minDl: 1.5, minUl: 1, maxRtt: 150, maxLoss: 3 },
+      },
+      {
+        key: 'teams-audio',
+        label: 'Audio only',
+        detail: '≥0.3/0.3 Mbps, RTT ≤200ms',
+        thresholds: { minDl: 0.3, minUl: 0.3, maxRtt: 200, maxLoss: 5 },
+      },
+    ],
+  },
+  {
+    service: 'Streaming',
+    qualities: [
+      {
+        key: 'streaming-4k',
+        label: '4K',
+        detail: '≥25 Mbps down',
+        thresholds: { minDl: 25, maxLoss: 2 },
+      },
+      {
+        key: 'streaming-1080p',
+        label: '1080p',
+        detail: '≥5 Mbps down',
+        thresholds: { minDl: 5, maxLoss: 3 },
+      },
+    ],
+  },
+  {
+    service: 'GeForce NOW',
+    qualities: [
+      {
+        key: 'geforce-1080p60',
+        label: '1080p60',
+        detail: '≥25 Mbps, RTT ≤40ms',
+        thresholds: { minDl: 25, maxRtt: 40, maxLoss: 1.5 },
+      },
+      {
+        key: 'geforce-720p60',
+        label: '720p60',
+        detail: '≥15 Mbps, RTT ≤80ms',
+        thresholds: { minDl: 15, maxRtt: 80, maxLoss: 2.5 },
+      },
+    ],
+  },
+];
 const LATENCY_URL = 'https://speed.cloudflare.com/__down?bytes=16';
 const DL_DURATION_S = 6;
 const UL_DURATION_S = 5;
@@ -13,6 +82,17 @@ const TOTAL_STEPS = 3;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const fmtMbps = (bps) => `${(bps / 1e6).toFixed(2)} Mbps`;
+const cacheBust = () => Math.random().toString(36).slice(2);
+const withCacheBust = (url) => {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('cacheBust', cacheBust());
+    return parsed.toString();
+  } catch {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}cacheBust=${cacheBust()}`;
+  }
+};
 const stddev = (arr) => {
   if (!arr.length) return 0;
   const mean = arr.reduce((acc, value) => acc + value, 0) / arr.length;
@@ -21,71 +101,86 @@ const stddev = (arr) => {
 };
 
 function rateCapabilities({ dlMbps, ulMbps, rtt, loss }) {
-  const specs = [
-    {
-      key: 'Teams audio',
-      thresholds: { minDl: 0.3, minUl: 0.3, maxRtt: 200, maxLoss: 5 },
-      why: '≥0.3/0.3 Mbps, RTT ≤200ms',
-    },
-    {
-      key: 'Teams video 720p',
-      thresholds: { minDl: 1.5, minUl: 1, maxRtt: 150, maxLoss: 3 },
-      why: '≥1.5/1 Mbps, RTT ≤150ms',
-    },
-    {
-      key: 'Streaming 1080p',
-      thresholds: { minDl: 5, maxLoss: 3 },
-      why: '≥5 Mbps down',
-    },
-    {
-      key: 'Streaming 4K',
-      thresholds: { minDl: 25, maxLoss: 2 },
-      why: '≥25 Mbps down',
-    },
-    {
-      key: 'GeForce NOW 1080p60',
-      thresholds: { minDl: 25, maxRtt: 40, maxLoss: 1.5 },
-      why: '≥25 Mbps, RTT ≤40ms',
-    },
-    {
-      key: 'GeForce NOW 720p60',
-      thresholds: { minDl: 15, maxRtt: 80, maxLoss: 2.5 },
-      why: '≥15 Mbps, RTT ≤80ms',
-    },
-  ];
+  return CAPABILITY_GROUPS.map((group) => {
+    const options = group.qualities.map((quality) => {
+      const missing = [];
+      const limiting = [];
 
-  const toCheck = (label, value, predicate) => {
-    if (value == null || Number.isNaN(value)) {
-      return { label, status: null };
+      if (quality.thresholds.minDl != null) {
+        if (dlMbps == null || Number.isNaN(dlMbps)) {
+          missing.push('download speed');
+        } else if (dlMbps + Number.EPSILON < quality.thresholds.minDl) {
+          limiting.push(`download speed (${dlMbps.toFixed(1)} < ${quality.thresholds.minDl} Mbps)`);
+        }
+      }
+
+      if (quality.thresholds.minUl != null) {
+        if (ulMbps == null || Number.isNaN(ulMbps)) {
+          missing.push('upload speed');
+        } else if (ulMbps + Number.EPSILON < quality.thresholds.minUl) {
+          limiting.push(`upload speed (${ulMbps.toFixed(1)} < ${quality.thresholds.minUl} Mbps)`);
+        }
+      }
+
+      if (quality.thresholds.maxRtt != null) {
+        if (rtt == null || Number.isNaN(rtt)) {
+          missing.push('latency');
+        } else if (rtt - Number.EPSILON > quality.thresholds.maxRtt) {
+          limiting.push(`latency (${rtt.toFixed(0)} ms > ${quality.thresholds.maxRtt} ms)`);
+        }
+      }
+
+      if (quality.thresholds.maxLoss != null) {
+        if (loss == null || Number.isNaN(loss)) {
+          missing.push('packet loss');
+        } else if (loss - Number.EPSILON > quality.thresholds.maxLoss) {
+          limiting.push(`packet loss (${loss.toFixed(1)}% > ${quality.thresholds.maxLoss}%)`);
+        }
+      }
+
+      const status = limiting.length > 0 ? false : missing.length > 0 ? null : true;
+
+      return {
+        key: quality.key,
+        label: quality.label,
+        detail: quality.detail,
+        status,
+        missing,
+        limiting,
+      };
+    });
+
+    const passingOptions = options.filter((option) => option.status === true);
+    const unknownOption = options.find((option) => option.status == null);
+    const failingOption = [...options].reverse().find((option) => option.status === false);
+
+    let ok;
+    let why;
+    let missing = [];
+    let limiting = [];
+
+    if (passingOptions.length > 0) {
+      const top = passingOptions[0];
+      ok = true;
+      why = `Highest supported quality: ${top.label} (${top.detail})`;
+    } else if (unknownOption) {
+      ok = null;
+      missing = unknownOption.missing;
+      why = `Need more data to evaluate ${group.service}.`;
+    } else {
+      ok = false;
+      limiting = failingOption?.limiting ?? [];
+      const label = failingOption?.label ?? group.service;
+      why = `Requirements not met for ${label}.`;
     }
-    return { label, status: predicate(value) };
-  };
-
-  return specs.map((spec) => {
-    const checks = [
-      spec.thresholds.minDl != null
-        ? toCheck('download speed', dlMbps, (value) => value >= spec.thresholds.minDl)
-        : null,
-      spec.thresholds.minUl != null
-        ? toCheck('upload speed', ulMbps, (value) => value >= spec.thresholds.minUl)
-        : null,
-      spec.thresholds.maxRtt != null
-        ? toCheck('latency', rtt, (value) => value <= spec.thresholds.maxRtt)
-        : null,
-      spec.thresholds.maxLoss != null
-        ? toCheck('packet loss', loss, (value) => value <= spec.thresholds.maxLoss)
-        : null,
-    ].filter(Boolean);
-
-    const missing = checks.filter((check) => check.status == null).map((check) => check.label);
-    const failed = checks.some((check) => check.status === false);
-    const ok = failed ? false : missing.length > 0 ? null : true;
 
     return {
-      key: spec.key,
+      key: group.service,
       ok,
-      why: spec.why,
+      why,
       missing,
+      limiting,
+      options,
     };
   });
 }
@@ -272,9 +367,16 @@ export default function NetworkCapabilityTester() {
     };
   }, [registerAborter]);
 
-  const measureUpload = useCallback(async (onProgress) => {
+  const measureUpload = useCallback(async ({ onProgress, onTargetChange } = {}) => {
     const controller = new AbortController();
     const unregister = registerAborter(controller);
+
+    if (UPLOAD_TARGETS.length === 0) {
+      unregister();
+      throw new Error(
+        'No upload endpoints configured. Set VITE_UPLOAD_ENDPOINTS or VITE_UPLOAD_ENDPOINT to provide at least one target.',
+      );
+    }
 
     const start = performance.now();
     const end = start + UL_DURATION_S * 1000;
@@ -291,6 +393,38 @@ export default function NetworkCapabilityTester() {
       window.crypto.getRandomValues(payload);
     }
 
+    let activeTargetIndex = 0;
+    let lastNotifiedTarget = -1;
+    const failureCounts = new Array(UPLOAD_TARGETS.length).fill(0);
+
+    const notifyTargetChange = (reason) => {
+      if (typeof onTargetChange !== 'function') return;
+      if (lastNotifiedTarget === activeTargetIndex && reason !== 'retry') {
+        return;
+      }
+      lastNotifiedTarget = activeTargetIndex;
+      const target = UPLOAD_TARGETS[activeTargetIndex];
+      onTargetChange({
+        name: target.name,
+        url: target.url,
+        reason,
+      });
+    };
+
+    notifyTargetChange('initial');
+
+    const advanceTarget = (reason) => {
+      if (UPLOAD_TARGETS.length <= 1) {
+        return;
+      }
+      const previousIndex = activeTargetIndex;
+      activeTargetIndex = (activeTargetIndex + 1) % UPLOAD_TARGETS.length;
+      if (activeTargetIndex !== previousIndex) {
+        failureCounts[activeTargetIndex] = 0;
+        notifyTargetChange(reason);
+      }
+    };
+
     async function pump() {
       while (performance.now() < end && runningRef.current) {
         if (inFlight >= MAX_PAR) {
@@ -299,7 +433,8 @@ export default function NetworkCapabilityTester() {
         }
         inFlight += 1;
         try {
-          const response = await fetch(`${UPLOAD_ENDPOINT}?cacheBust=${Math.random()}`, {
+          const target = UPLOAD_TARGETS[activeTargetIndex];
+          const response = await fetch(withCacheBust(target.url), {
             method: 'POST',
             body: payload,
             signal: controller.signal,
@@ -309,16 +444,19 @@ export default function NetworkCapabilityTester() {
             },
           });
           if (!response.ok) {
-            throw new Error(
+            const error = new Error(
               response.status === 429
                 ? 'Upload test was rate limited (HTTP 429).'
                 : `Upload request failed with status ${response.status}.`,
             );
+            error.status = response.status;
+            throw error;
           }
           await response.arrayBuffer();
           bytes += payload.byteLength;
           count += 1;
           lastError = null;
+          failureCounts[activeTargetIndex] = 0;
           const now = performance.now();
           if (onProgress && now - lastProgressEmit >= 500) {
             lastProgressEmit = now;
@@ -335,7 +473,21 @@ export default function NetworkCapabilityTester() {
           if (error?.name === 'AbortError') {
             return;
           }
-          lastError = error instanceof Error ? error : new Error('Upload request failed.');
+          const normalizedError = error instanceof Error ? error : new Error('Upload request failed.');
+          lastError = normalizedError;
+          const status =
+            typeof normalizedError.status === 'number'
+              ? normalizedError.status
+              : normalizedError.name === 'TypeError'
+                ? 0
+                : undefined;
+          failureCounts[activeTargetIndex] += 1;
+          if (
+            UPLOAD_TARGETS.length > 1 &&
+            (status === 429 || status === 403 || status === 0 || failureCounts[activeTargetIndex] >= 3)
+          ) {
+            advanceTarget('fallback');
+          }
         } finally {
           inFlight -= 1;
         }
@@ -493,12 +645,29 @@ export default function NetworkCapabilityTester() {
       logProgress('Upload test started.');
       console.info('[SpeedTest] Measuring upload throughput');
       try {
-        const upload = await measureUpload((progress) => {
-          logProgress(
-            `Upload progress: ${(progress.bytes / 1e6).toFixed(1)} MB sent, ${fmtMbps(
-              progress.bps,
-            )}`,
-          );
+        const upload = await measureUpload({
+          onProgress: (progress) => {
+            logProgress(
+              `Upload progress: ${(progress.bytes / 1e6).toFixed(1)} MB sent, ${fmtMbps(
+                progress.bps,
+              )}`,
+            );
+          },
+          onTargetChange: (target) => {
+            const label = target.name || 'alternate endpoint';
+            let description = label;
+            try {
+              const url = new URL(target.url);
+              description = `${label} (${url.host})`;
+            } catch {
+              description = label;
+            }
+            if (target.reason === 'initial') {
+              logProgress(`Upload endpoint: ${description}`);
+            } else if (target.reason === 'fallback') {
+              logProgress(`Switched upload endpoint to ${description}`);
+            }
+          },
         });
         console.info('[SpeedTest] Upload test finished', {
           megabitsPerSecond: upload.bps / 1e6,
@@ -631,16 +800,20 @@ export default function NetworkCapabilityTester() {
     return formatter(value);
   }, []);
 
-  const formatMissingMeasurements = useCallback((missing) => {
-    if (!missing.length) return '';
-    if (missing.length === 1) {
-      return `${missing[0]} measurement`;
-    }
-    if (missing.length === 2) {
-      return `${missing[0]} and ${missing[1]} measurements`;
-    }
-    return `${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]} measurements`;
+  const formatList = useCallback((items) => {
+    if (!items.length) return '';
+    if (items.length === 1) return items[0];
+    if (items.length === 2) return `${items[0]} and ${items[1]}`;
+    return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
   }, []);
+
+  const formatMissingMeasurements = useCallback(
+    (missing) => {
+      if (!missing.length) return '';
+      return `${formatList(missing)} ${missing.length === 1 ? 'measurement' : 'measurements'}`;
+    },
+    [formatList],
+  );
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -760,27 +933,61 @@ export default function NetworkCapabilityTester() {
                 Run the test for recommendations.
               </p>
             )}
-            {caps.map((capability) => (
-              <div
-                key={capability.key}
-                className="capability-item"
-              >
-                <span className="capability-icon">
-                  {capability.ok === true ? '✅' : capability.ok === false ? '❌' : '❔'}
-                </span>
-                <div className="capability-text">
-                  <div className="capability-name">{capability.key}</div>
-                  <div className="capability-desc">
-                    {capability.why}
-                  </div>
-                  {capability.ok === null && capability.missing.length > 0 && (
-                    <div className="capability-note">
-                      Missing {formatMissingMeasurements(capability.missing)}.
+            {caps.map((capability) => {
+              const blockedOption = capability.options?.find(
+                (option) => option.status === false && option.limiting.length > 0,
+              );
+              return (
+                <div
+                  key={capability.key}
+                  className="capability-item"
+                >
+                  <span className="capability-icon">
+                    {capability.ok === true ? '✅' : capability.ok === false ? '❌' : '❔'}
+                  </span>
+                  <div className="capability-text">
+                    <div className="capability-name">{capability.key}</div>
+                    <div className="capability-desc">
+                      {capability.why}
                     </div>
-                  )}
+                    {capability.options?.length > 0 && (
+                      <div className="capability-options">
+                        {capability.options.map((option) => (
+                          <span
+                            key={option.key}
+                            className={`capability-pill ${
+                              option.status === true
+                                ? 'capability-pill--available'
+                                : option.status == null
+                                  ? 'capability-pill--unknown'
+                                  : 'capability-pill--unavailable'
+                            }`}
+                            title={option.detail}
+                          >
+                            {option.label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {capability.ok === null && capability.missing.length > 0 && (
+                      <div className="capability-note">
+                        Missing {formatMissingMeasurements(capability.missing)}.
+                      </div>
+                    )}
+                    {capability.ok === false && capability.limiting.length > 0 && (
+                      <div className="capability-note">
+                        Limited by {formatList(capability.limiting)}.
+                      </div>
+                    )}
+                    {capability.ok === true && blockedOption && (
+                      <div className="capability-note">
+                        Higher tiers limited by {formatList(blockedOption.limiting)}.
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
       </div>

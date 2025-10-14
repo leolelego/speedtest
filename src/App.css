@@ -244,6 +244,38 @@
   white-space: normal;
 }
 
+.capability-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+}
+
+.capability-pill {
+  font-size: 0.7rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--surface-border);
+  background: var(--surface-strong);
+  color: var(--text-secondary);
+  transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease, opacity 200ms ease;
+}
+
+.capability-pill--available {
+  background: rgba(79, 70, 229, 0.18);
+  border-color: rgba(79, 70, 229, 0.45);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.capability-pill--unavailable {
+  opacity: 0.55;
+}
+
+.capability-pill--unknown {
+  border-style: dashed;
+}
+
 .capability-note {
   font-size: 0.7rem;
   color: var(--text-secondary);
