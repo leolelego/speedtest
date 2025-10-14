@@ -16,7 +16,10 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.20",
     "gh-pages": "^6.1.1",
+    "postcss": "^8.4.49",
+    "tailwindcss": "next",
     "vite": "^5.2.0"
   }
 }
