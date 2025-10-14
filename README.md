@@ -1,5 +1,13 @@
 # speedtest
 
+> A Speed test application for remote worker in there home, coffee shop or van
+This repository contains a Vite + React single-page application configured for deployment on GitHub Pages.
+
+## Code Methology
+This project is also a way to learn how to use tool like ChatGPT Canevas or OpenAI Codex. 
+
+## Getting started
+
 This repository contains a Vite + React single-page application configured for deployment on GitHub Pages.
 
 ## Getting started
