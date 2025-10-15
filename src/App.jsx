@@ -85,6 +85,7 @@ const DL_DURATION_S = 6;
 const UL_DURATION_S = 5;
 const RTT_PINGS = 12;
 const TOTAL_STEPS = 3;
+const RAINBOW_THEME_THRESHOLD_MBPS = 40;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const fmtMbps = (bps) => `${(bps / 1e6).toFixed(2)} Mbps`;
@@ -862,8 +863,21 @@ export default function NetworkCapabilityTester() {
   const isSamplesLoading = isRunning && samples.dl === 0 && samples.ul === 0 && samples.rtt === 0;
   const isCapabilitiesLoading = isRunning && caps.length === 0;
 
+  const hasRainbowDownload =
+    !stepErrors.dl && dlBps != null && dlBps / 1e6 >= RAINBOW_THEME_THRESHOLD_MBPS;
+  const isRainbowThemeActive = hasRainbowDownload && !isRunning;
+  const appRootClassName = `app-root${isRainbowThemeActive ? ' app-root--rainbow' : ''}`;
+
   return (
-    <div className="app-root">
+    <div className={appRootClassName}>
+      {isRainbowThemeActive && (
+        <div className="theme-banner" role="status" aria-live="polite">
+          <span className="theme-banner__emoji" aria-hidden="true">
+            🦄
+          </span>
+          <span className="theme-banner__text">Mode Rainbow &amp; Licorne activé&nbsp;!</span>
+        </div>
+      )}
       {isRunning && (
         <div className="loading-banner" role="status" aria-live="polite">
           <span className="loading-banner__spinner" aria-hidden="true" />
