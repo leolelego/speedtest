@@ -110,10 +110,20 @@
   transition: background-color 200ms ease, color 200ms ease;
 }
 
+.stat-card--secondary {
+  padding: 0.55rem;
+  min-height: 56px;
+  gap: 0.2rem;
+}
+
 .stat-card__label {
   font-size: 0.75rem;
   color: var(--text-secondary);
   letter-spacing: 0.01em;
+}
+
+.stat-card--secondary .stat-card__label {
+  font-size: 0.55rem;
 }
 
 .stat-card__value {
@@ -121,55 +131,8 @@
   font-weight: 600;
 }
 
-.progress-feed {
-  margin-top: 1.1rem;
-  border-radius: 14px;
-  border: 1px solid var(--surface-border);
-  background: var(--surface);
-  padding: 0.85rem 0.9rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-  max-height: 220px;
-  overflow: auto;
-}
-
-.progress-feed__title {
-  margin: 0;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.progress-feed__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-}
-
-.progress-feed__item {
-  display: flex;
-  gap: 0.6rem;
-  font-size: 0.78rem;
-  color: var(--text-secondary);
-  line-height: 1.3;
-}
-
-.progress-feed__timestamp {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.progress-feed__message {
-  flex: 1;
-  min-width: 0;
-  word-break: break-word;
+.stat-card--secondary .stat-card__value {
+  font-size: 0.65rem;
 }
 
 .info-grid {
@@ -498,12 +461,6 @@
   width: 32px;
   height: 32px;
   border-radius: 999px;
-}
-
-.skeleton--feed {
-  width: 100%;
-  height: 120px;
-  border-radius: 14px;
 }
 
 @keyframes skeleton-shimmer {
