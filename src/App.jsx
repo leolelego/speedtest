@@ -54,6 +54,12 @@ const CAPABILITY_GROUPS = [
         detail: '≥5 Mbps down',
         thresholds: { minDl: 5, maxLoss: 3 },
       },
+      {
+        key: 'streaming-720p',
+        label: '720p',
+        detail: '≥3 Mbps down',
+        thresholds: { minDl: 3, maxLoss: 4 },
+      },
     ],
   },
   {
@@ -386,12 +392,29 @@ export default function NetworkCapabilityTester() {
     let lastError = null;
     let lastProgressEmit = start;
 
-    const payload = new Uint8Array(2 ** 20 * 2);
-    fillRandomBytes(payload);
+    const payloadSize = 2 ** 21;
+    const payloadBuffer = new Uint8Array(payloadSize);
+    fillRandomBytes(payloadBuffer);
+    const payloadBody =
+      typeof Blob === 'function'
+        ? new Blob([payloadBuffer], { type: 'text/plain;charset=UTF-8' })
+        : payloadBuffer;
 
     let activeTargetIndex = 0;
     let lastNotifiedTarget = -1;
     const failureCounts = new Array(UPLOAD_TARGETS.length).fill(0);
+    const crossOriginTargets = UPLOAD_TARGETS.map((target) => {
+      if (typeof window === 'undefined' || !window.location) {
+        return false;
+      }
+      try {
+        const resolved = new URL(target.url, window.location.origin);
+        return resolved.origin !== window.location.origin;
+      } catch {
+        return false;
+      }
+    });
+    const requestModes = crossOriginTargets.map(() => 'cors');
 
     const notifyTargetChange = (reason) => {
       if (typeof onTargetChange !== 'function') return;
@@ -430,16 +453,18 @@ export default function NetworkCapabilityTester() {
         inFlight += 1;
         try {
           const target = UPLOAD_TARGETS[activeTargetIndex];
-          const response = await fetch(withCacheBust(target.url), {
+          const requestUrl = withCacheBust(target.url);
+          const requestMode = requestModes[activeTargetIndex];
+          const response = await fetch(requestUrl, {
             method: 'POST',
-            body: payload,
+            body: payloadBody,
             signal: controller.signal,
             cache: 'no-store',
-            headers: {
-              'Content-Type': 'application/octet-stream',
-            },
+            ...(requestMode === 'no-cors' ? { mode: 'no-cors' } : {}),
           });
-          if (!response.ok) {
+          const isOpaqueResponse =
+            response.type === 'opaque' || response.type === 'opaqueredirect';
+          if (!response.ok && !isOpaqueResponse) {
             const error = new Error(
               response.status === 429
                 ? 'Upload test was rate limited (HTTP 429).'
@@ -448,8 +473,10 @@ export default function NetworkCapabilityTester() {
             error.status = response.status;
             throw error;
           }
-          await response.arrayBuffer();
-          bytes += payload.byteLength;
+          if (!isOpaqueResponse) {
+            await response.arrayBuffer();
+          }
+          bytes += payloadSize;
           count += 1;
           lastError = null;
           failureCounts[activeTargetIndex] = 0;
@@ -470,6 +497,14 @@ export default function NetworkCapabilityTester() {
             return;
           }
           const normalizedError = error instanceof Error ? error : new Error('Upload request failed.');
+          const shouldRetryNoCors =
+            normalizedError.name === 'TypeError' &&
+            requestModes[activeTargetIndex] === 'cors' &&
+            crossOriginTargets[activeTargetIndex];
+          if (shouldRetryNoCors) {
+            requestModes[activeTargetIndex] = 'no-cors';
+            continue;
+          }
           lastError = normalizedError;
           const status =
             typeof normalizedError.status === 'number'
@@ -818,6 +853,15 @@ export default function NetworkCapabilityTester() {
     return () => clearTimeout(timer);
   }, [startTests]);
 
+  const showStepMeter = isRunning && status.step > 0;
+  const isDownloadLoading = isRunning && dlBps == null && !stepErrors.dl;
+  const isUploadLoading = isRunning && ulBps == null && !stepErrors.ul;
+  const isLatencyLoading = isRunning && latencyMs == null && !stepErrors.rtt;
+  const isJitterLoading = isRunning && jitterMs == null && !stepErrors.rtt;
+  const isLossLoading = isRunning && lossPct == null && !stepErrors.rtt;
+  const isSamplesLoading = isRunning && samples.dl === 0 && samples.ul === 0 && samples.rtt === 0;
+  const isCapabilitiesLoading = isRunning && caps.length === 0;
+
   return (
     <div className="app-root">
       {isRunning && (
@@ -831,41 +875,20 @@ export default function NetworkCapabilityTester() {
         </div>
       )}
       <div className="app-container">
-        <section className={`panel panel--elevated ${isRunning ? 'panel--loading' : ''}`}>
-          {isRunning && (
-            <div className="panel-skeleton panel-skeleton--speedtest" aria-hidden="true">
-              <div className="panel-skeleton__header">
-                <span className="skeleton skeleton--title" />
-                <span className="skeleton skeleton--pill" />
-              </div>
-              <div className="panel-skeleton__subheader">
-                <span className="skeleton skeleton--text" />
-                <span className="skeleton skeleton--text skeleton--short" />
-              </div>
-              <div className="panel-skeleton__grid panel-skeleton__grid--main">
-                <span className="skeleton skeleton--card" />
-                <span className="skeleton skeleton--card" />
-              </div>
-              <div className="panel-skeleton__grid panel-skeleton__grid--details">
-                <span className="skeleton skeleton--card" />
-                <span className="skeleton skeleton--card" />
-                <span className="skeleton skeleton--card" />
-                <span className="skeleton skeleton--card" />
-              </div>
-            </div>
-          )}
-          <div className="panel__content" aria-hidden={isRunning}>
+        <section className="panel panel--elevated">
+          <div className="panel__content">
             <div className="panel-header">
               <div>
                 <h2 className="panel-title">Speed Test</h2>
                 <span className="panel-subtitle">DL/UL ~6s/5s + RTT</span>
               </div>
-              <div className="test-progress">
-                <span className="test-progress__label">{status.label}</span>
-                <span className="test-progress__meter">
-                  Step {Math.min(status.step, TOTAL_STEPS)} / {TOTAL_STEPS}
-                </span>
-              </div>
+              {showStepMeter && (
+                <div className="test-progress">
+                  <span className="test-progress__meter">
+                    Step {Math.min(status.step, TOTAL_STEPS)} / {TOTAL_STEPS}
+                  </span>
+                </div>
+              )}
             </div>
             {Object.values(stepErrors).some(Boolean) && (
               <div className="test-progress__errors">
@@ -875,128 +898,250 @@ export default function NetworkCapabilityTester() {
               </div>
             )}
             <div className="stat-grid stat-grid--main">
-              <div className="stat-card">
-                <div className="stat-card__label">Download</div>
+              <div className={`stat-card${isDownloadLoading ? ' stat-card--loading' : ''}`}>
+                <div className="stat-card__label">
+                  {isDownloadLoading ? (
+                    <>
+                      <span className="skeleton skeleton--stat-label" aria-hidden="true" />
+                      <span className="sr-only">Measuring download speed…</span>
+                    </>
+                  ) : (
+                    'Download'
+                  )}
+                </div>
                 <div className="stat-card__value">
-                  {renderThroughput(dlBps, stepErrors.dl)}
+                  {isDownloadLoading ? (
+                    <>
+                      <span className="skeleton skeleton--stat-value" aria-hidden="true" />
+                      <span className="sr-only">Download speed pending</span>
+                    </>
+                  ) : (
+                    renderThroughput(dlBps, stepErrors.dl)
+                  )}
                 </div>
               </div>
-              <div className="stat-card">
-                <div className="stat-card__label">Upload</div>
+              <div className={`stat-card${isUploadLoading ? ' stat-card--loading' : ''}`}>
+                <div className="stat-card__label">
+                  {isUploadLoading ? (
+                    <>
+                      <span className="skeleton skeleton--stat-label" aria-hidden="true" />
+                      <span className="sr-only">Measuring upload speed…</span>
+                    </>
+                  ) : (
+                    'Upload'
+                  )}
+                </div>
                 <div className="stat-card__value">
-                  {renderThroughput(ulBps, stepErrors.ul)}
+                  {isUploadLoading ? (
+                    <>
+                      <span className="skeleton skeleton--stat-value" aria-hidden="true" />
+                      <span className="sr-only">Upload speed pending</span>
+                    </>
+                  ) : (
+                    renderThroughput(ulBps, stepErrors.ul)
+                  )}
                 </div>
               </div>
             </div>
             <div className="stat-grid stat-grid--details">
-              <div className="stat-card stat-card--secondary">
-                <div className="stat-card__label">Latency</div>
+              <div
+                className={`stat-card stat-card--secondary${
+                  isLatencyLoading ? ' stat-card--loading' : ''
+                }`}
+              >
+                <div className="stat-card__label">
+                  {isLatencyLoading ? (
+                    <>
+                      <span className="skeleton skeleton--stat-label" aria-hidden="true" />
+                      <span className="sr-only">Measuring latency…</span>
+                    </>
+                  ) : (
+                    'Latency'
+                  )}
+                </div>
                 <div className="stat-card__value">
-                  {renderLatencyMetric(latencyMs, stepErrors.rtt, (value) => `${value.toFixed(0)} ms`)}
+                  {isLatencyLoading ? (
+                    <>
+                      <span className="skeleton skeleton--stat-detail" aria-hidden="true" />
+                      <span className="sr-only">Latency pending</span>
+                    </>
+                  ) : (
+                    renderLatencyMetric(latencyMs, stepErrors.rtt, (value) => `${value.toFixed(0)} ms`)
+                  )}
                 </div>
               </div>
-              <div className="stat-card stat-card--secondary">
-                <div className="stat-card__label">Jitter</div>
+              <div
+                className={`stat-card stat-card--secondary${
+                  isJitterLoading ? ' stat-card--loading' : ''
+                }`}
+              >
+                <div className="stat-card__label">
+                  {isJitterLoading ? (
+                    <>
+                      <span className="skeleton skeleton--stat-label" aria-hidden="true" />
+                      <span className="sr-only">Measuring jitter…</span>
+                    </>
+                  ) : (
+                    'Jitter'
+                  )}
+                </div>
                 <div className="stat-card__value">
-                  {renderLatencyMetric(jitterMs, stepErrors.rtt, (value) => `${value.toFixed(0)} ms`)}
+                  {isJitterLoading ? (
+                    <>
+                      <span className="skeleton skeleton--stat-detail" aria-hidden="true" />
+                      <span className="sr-only">Jitter pending</span>
+                    </>
+                  ) : (
+                    renderLatencyMetric(jitterMs, stepErrors.rtt, (value) => `${value.toFixed(0)} ms`)
+                  )}
                 </div>
               </div>
-              <div className="stat-card stat-card--secondary">
-                <div className="stat-card__label">Loss</div>
+              <div
+                className={`stat-card stat-card--secondary${isLossLoading ? ' stat-card--loading' : ''}`}
+              >
+                <div className="stat-card__label">
+                  {isLossLoading ? (
+                    <>
+                      <span className="skeleton skeleton--stat-label" aria-hidden="true" />
+                      <span className="sr-only">Measuring loss…</span>
+                    </>
+                  ) : (
+                    'Loss'
+                  )}
+                </div>
                 <div className="stat-card__value">
-                  {renderLatencyMetric(lossPct, stepErrors.rtt, (value) => `${value.toFixed(1)} %`)}
+                  {isLossLoading ? (
+                    <>
+                      <span className="skeleton skeleton--stat-detail" aria-hidden="true" />
+                      <span className="sr-only">Loss pending</span>
+                    </>
+                  ) : (
+                    renderLatencyMetric(lossPct, stepErrors.rtt, (value) => `${value.toFixed(1)} %`)
+                  )}
                 </div>
               </div>
-              <div className="stat-card stat-card--secondary">
-                <div className="stat-card__label">Samples</div>
+              <div
+                className={`stat-card stat-card--secondary${
+                  isSamplesLoading ? ' stat-card--loading' : ''
+                }`}
+              >
+                <div className="stat-card__label">
+                  {isSamplesLoading ? (
+                    <>
+                      <span className="skeleton skeleton--stat-label" aria-hidden="true" />
+                      <span className="sr-only">Collecting samples…</span>
+                    </>
+                  ) : (
+                    'Samples'
+                  )}
+                </div>
                 <div className="stat-card__value">
-                  {samples.dl || samples.ul || samples.rtt ? `${samples.dl}/${samples.ul}/${samples.rtt}` : '—'}
+                  {isSamplesLoading ? (
+                    <>
+                      <span className="skeleton skeleton--stat-detail" aria-hidden="true" />
+                      <span className="sr-only">Sample counts pending</span>
+                    </>
+                  ) : samples.dl || samples.ul || samples.rtt ? (
+                    `${samples.dl}/${samples.ul}/${samples.rtt}`
+                  ) : (
+                    '—'
+                  )}
                 </div>
               </div>
             </div>
           </div>
         </section>
 
-        <section className={`panel panel--subtle ${isRunning ? 'panel--loading' : ''}`}>
-          {isRunning && (
-            <div className="panel-skeleton panel-skeleton--capabilities" aria-hidden="true">
-              <span className="skeleton skeleton--heading" />
-              <div className="panel-skeleton__list">
-                {Array.from({ length: 3 }).map((_, index) => (
-                  <div key={index} className="panel-skeleton__list-item">
-                    <span className="skeleton skeleton--icon" />
-                    <div className="panel-skeleton__list-text">
-                      <span className="skeleton skeleton--text" />
-                      <span className="skeleton skeleton--subtext" />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="panel__content" aria-hidden={isRunning}>
+        <section className="panel panel--subtle">
+          <div className="panel__content">
             <h3 className="panel-heading">Can I…?</h3>
             <div className="capabilities-grid">
-              {caps.length === 0 && (
+              {isCapabilitiesLoading && (
+                <>
+                  {Array.from({ length: 3 }).map((_, index) => (
+                    <div key={index} className="capability-item capability-item--loading">
+                      <span className="capability-icon" aria-hidden="true">
+                        <span className="skeleton skeleton--capability-icon" />
+                      </span>
+                      <div className="capability-text">
+                        <span className="skeleton skeleton--capability-line" aria-hidden="true" />
+                        <span className="skeleton skeleton--capability-subline" aria-hidden="true" />
+                        <div className="capability-options">
+                          {Array.from({ length: 3 }).map((pillIndex) => (
+                            <span
+                              key={pillIndex}
+                              className="skeleton skeleton--capability-pill"
+                              aria-hidden="true"
+                            />
+                          ))}
+                        </div>
+                        <span className="sr-only">Evaluating capability option…</span>
+                      </div>
+                    </div>
+                  ))}
+                </>
+              )}
+              {!isCapabilitiesLoading && caps.length === 0 && (
                 <p className="empty-message">
                   Run the test for recommendations.
                 </p>
               )}
-              {caps.map((capability) => {
-                const blockedOption = capability.options?.find(
-                  (option) => option.status === false && option.limiting.length > 0,
-                );
-                return (
-                  <div
-                    key={capability.key}
-                    className="capability-item"
-                  >
-                    <span className="capability-icon">
-                      {capability.ok === true ? '✅' : capability.ok === false ? '❌' : '❔'}
-                    </span>
-                    <div className="capability-text">
-                      <div className="capability-name">{capability.key}</div>
-                      <div className="capability-desc">
-                        {capability.why}
+              {!isCapabilitiesLoading &&
+                caps.map((capability) => {
+                  const blockedOption = capability.options?.find(
+                    (option) => option.status === false && option.limiting.length > 0,
+                  );
+                  return (
+                    <div
+                      key={capability.key}
+                      className="capability-item"
+                    >
+                      <span className="capability-icon">
+                        {capability.ok === true ? '✅' : capability.ok === false ? '❌' : '❔'}
+                      </span>
+                      <div className="capability-text">
+                        <div className="capability-name">{capability.key}</div>
+                        <div className="capability-desc">
+                          {capability.why}
+                        </div>
+                        {capability.options?.length > 0 && (
+                          <div className="capability-options">
+                            {capability.options.map((option) => (
+                              <span
+                                key={option.key}
+                                className={`capability-pill ${
+                                  option.status === true
+                                    ? 'capability-pill--available'
+                                    : option.status == null
+                                      ? 'capability-pill--unknown'
+                                      : 'capability-pill--unavailable'
+                                }`}
+                                title={option.detail}
+                              >
+                                {option.label}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                        {capability.ok === null && capability.missing.length > 0 && (
+                          <div className="capability-note">
+                            Missing {formatMissingMeasurements(capability.missing)}.
+                          </div>
+                        )}
+                        {capability.ok === false && capability.limiting.length > 0 && (
+                          <div className="capability-note">
+                            Limited by {formatList(capability.limiting)}.
+                          </div>
+                        )}
+                        {capability.ok === true && blockedOption && (
+                          <div className="capability-note">
+                            Higher tiers limited by {formatList(blockedOption.limiting)}.
+                          </div>
+                        )}
                       </div>
-                      {capability.options?.length > 0 && (
-                        <div className="capability-options">
-                          {capability.options.map((option) => (
-                            <span
-                              key={option.key}
-                              className={`capability-pill ${
-                                option.status === true
-                                  ? 'capability-pill--available'
-                                  : option.status == null
-                                    ? 'capability-pill--unknown'
-                                    : 'capability-pill--unavailable'
-                              }`}
-                              title={option.detail}
-                            >
-                              {option.label}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {capability.ok === null && capability.missing.length > 0 && (
-                        <div className="capability-note">
-                          Missing {formatMissingMeasurements(capability.missing)}.
-                        </div>
-                      )}
-                      {capability.ok === false && capability.limiting.length > 0 && (
-                        <div className="capability-note">
-                          Limited by {formatList(capability.limiting)}.
-                        </div>
-                      )}
-                      {capability.ok === true && blockedOption && (
-                        <div className="capability-note">
-                          Higher tiers limited by {formatList(blockedOption.limiting)}.
-                        </div>
-                      )}
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
             </div>
           </div>
         </section>
