@@ -213,13 +213,10 @@ export default function NetworkCapabilityTester() {
   const [lossPct, setLossPct] = useState(null);
   const [samples, setSamples] = useState({ dl: 0, ul: 0, rtt: 0 });
   const [stepErrors, setStepErrors] = useState({ dl: null, ul: null, rtt: null });
-  const [progressDetails, setProgressDetails] = useState([]);
-
   const [isRunning, setIsRunning] = useState(false);
   const [status, setStatus] = useState({ label: 'Idle', step: 0 });
   const runningRef = useRef(false);
   const abortersRef = useRef([]);
-  const startTimeRef = useRef(null);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -270,18 +267,7 @@ export default function NetworkCapabilityTester() {
   }, []);
 
   const logProgress = useCallback((message) => {
-    setProgressDetails((previous) => {
-      const timestamp =
-        startTimeRef.current && typeof performance !== 'undefined'
-          ? (performance.now() - startTimeRef.current) / 1000
-          : 0;
-      const entry = {
-        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        message,
-        timestamp,
-      };
-      return [...previous, entry];
-    });
+    console.debug(`[SpeedTest] ${message}`);
   }, []);
 
   const handleTestError = useCallback(
@@ -609,8 +595,6 @@ export default function NetworkCapabilityTester() {
     setLossPct(null);
     setSamples({ dl: 0, ul: 0, rtt: 0 });
     setStepErrors({ dl: null, ul: null, rtt: null });
-    setProgressDetails([]);
-    startTimeRef.current = typeof performance !== 'undefined' ? performance.now() : null;
     logProgress('Initializing test environment…');
 
     try {
@@ -839,7 +823,11 @@ export default function NetworkCapabilityTester() {
       {isRunning && (
         <div className="loading-banner" role="status" aria-live="polite">
           <span className="loading-banner__spinner" aria-hidden="true" />
-          <span className="loading-banner__text">Running speed test…</span>
+          <span className="loading-banner__text">
+            {status.step > 0
+              ? `Step ${Math.min(status.step, TOTAL_STEPS)} / ${TOTAL_STEPS} · ${status.label}`
+              : status.label}
+          </span>
         </div>
       )}
       <div className="app-container">
@@ -864,7 +852,6 @@ export default function NetworkCapabilityTester() {
                 <span className="skeleton skeleton--card" />
                 <span className="skeleton skeleton--card" />
               </div>
-              <span className="skeleton skeleton--feed" />
             </div>
           )}
           <div className="panel__content" aria-hidden={isRunning}>
@@ -902,69 +889,33 @@ export default function NetworkCapabilityTester() {
               </div>
             </div>
             <div className="stat-grid stat-grid--details">
-              <div className="stat-card">
+              <div className="stat-card stat-card--secondary">
                 <div className="stat-card__label">Latency</div>
                 <div className="stat-card__value">
                   {renderLatencyMetric(latencyMs, stepErrors.rtt, (value) => `${value.toFixed(0)} ms`)}
                 </div>
               </div>
-              <div className="stat-card">
+              <div className="stat-card stat-card--secondary">
                 <div className="stat-card__label">Jitter</div>
                 <div className="stat-card__value">
                   {renderLatencyMetric(jitterMs, stepErrors.rtt, (value) => `${value.toFixed(0)} ms`)}
                 </div>
               </div>
-              <div className="stat-card">
+              <div className="stat-card stat-card--secondary">
                 <div className="stat-card__label">Loss</div>
                 <div className="stat-card__value">
                   {renderLatencyMetric(lossPct, stepErrors.rtt, (value) => `${value.toFixed(1)} %`)}
                 </div>
               </div>
-              <div className="stat-card">
+              <div className="stat-card stat-card--secondary">
                 <div className="stat-card__label">Samples</div>
                 <div className="stat-card__value">
                   {samples.dl || samples.ul || samples.rtt ? `${samples.dl}/${samples.ul}/${samples.rtt}` : '—'}
                 </div>
               </div>
             </div>
-            {progressDetails.length > 0 && (
-              <div className="progress-feed">
-                <h4 className="progress-feed__title">Live progress</h4>
-                <ul className="progress-feed__list">
-                  {progressDetails.map((entry) => (
-                    <li key={entry.id} className="progress-feed__item">
-                      <span className="progress-feed__timestamp">{entry.timestamp.toFixed(1)}s</span>
-                      <span className="progress-feed__message">{entry.message}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
           </div>
         </section>
-
-        <div className="info-grid">
-          <section className="panel panel--subtle">
-            <h3 className="panel-heading">IP &amp; Location</h3>
-            <div className="info-list">
-              <div>
-                <span className="info-list__label">IP:</span> {ipInfo.ip}
-              </div>
-              <div>
-                <span className="info-list__label">City:</span> {ipInfo.city}
-              </div>
-              <div>
-                <span className="info-list__label">Region:</span> {ipInfo.region}
-              </div>
-              <div>
-                <span className="info-list__label">Country:</span> {ipInfo.country}
-              </div>
-              <div>
-                <span className="info-list__label">ISP:</span> {ipInfo.org}
-              </div>
-            </div>
-          </section>
-        </div>
 
         <section className={`panel panel--subtle ${isRunning ? 'panel--loading' : ''}`}>
           {isRunning && (
@@ -1049,6 +1000,28 @@ export default function NetworkCapabilityTester() {
             </div>
           </div>
         </section>
+        <div className="info-grid">
+          <section className="panel panel--subtle">
+            <h3 className="panel-heading">IP &amp; Location</h3>
+            <div className="info-list">
+              <div>
+                <span className="info-list__label">IP:</span> {ipInfo.ip}
+              </div>
+              <div>
+                <span className="info-list__label">City:</span> {ipInfo.city}
+              </div>
+              <div>
+                <span className="info-list__label">Region:</span> {ipInfo.region}
+              </div>
+              <div>
+                <span className="info-list__label">Country:</span> {ipInfo.country}
+              </div>
+              <div>
+                <span className="info-list__label">ISP:</span> {ipInfo.org}
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
 
       <div className="app-footer">
