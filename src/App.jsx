@@ -17,6 +17,40 @@ const DEFAULT_UPLOAD_TARGETS = [
   { name: 'HTTPBin', url: 'https://httpbin.org/post' },
 ];
 
+const UPLOAD_TARGET_CONFIG = new Map([
+  [
+    'https://speed.cloudflare.com/__up',
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/octet-stream',
+        'cf-speedtest': 'true',
+      },
+      payloadSize: 2 ** 21,
+    },
+  ],
+  [
+    'https://postman-echo.com/post',
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/octet-stream',
+      },
+      payloadSize: 2 ** 21,
+    },
+  ],
+  [
+    'https://httpbin.org/post',
+    {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/octet-stream',
+      },
+      payloadSize: 2 ** 21,
+    },
+  ],
+]);
+
 const UPLOAD_TARGETS = [...ENV_UPLOAD_ENDPOINTS, ...DEFAULT_UPLOAD_TARGETS].filter(
   (target, index, array) => array.findIndex((item) => item.url === target.url) === index,
 );
@@ -396,13 +430,12 @@ export default function NetworkCapabilityTester() {
     let lastError = null;
     let lastProgressEmit = start;
 
-    const payloadSize = 2 ** 21;
-    const payloadBuffer = new Uint8Array(payloadSize);
+    const configuredPayloadSize = Math.max(
+      ...UPLOAD_TARGETS.map((target) => UPLOAD_TARGET_CONFIG.get(target.url)?.payloadSize ?? 0),
+      2 ** 21,
+    );
+    const payloadBuffer = new Uint8Array(configuredPayloadSize);
     fillRandomBytes(payloadBuffer);
-    const payloadBody =
-      typeof Blob === 'function'
-        ? new Blob([payloadBuffer], { type: 'text/plain;charset=UTF-8' })
-        : payloadBuffer;
 
     let activeTargetIndex = 0;
     let lastNotifiedTarget = -1;
@@ -457,13 +490,21 @@ export default function NetworkCapabilityTester() {
         inFlight += 1;
         try {
           const target = UPLOAD_TARGETS[activeTargetIndex];
+          const targetConfig = UPLOAD_TARGET_CONFIG.get(target.url);
+          const payloadSize = targetConfig?.payloadSize ?? payloadBuffer.length;
+          const payloadBody = payloadBuffer.subarray(0, payloadSize);
           const requestUrl = withCacheBust(target.url);
           const requestMode = requestModes[activeTargetIndex];
+          const headers =
+            requestMode === 'no-cors'
+              ? undefined
+              : targetConfig?.headers ?? { 'content-type': 'application/octet-stream' };
           const response = await fetch(requestUrl, {
-            method: 'POST',
+            method: targetConfig?.method ?? 'POST',
             body: payloadBody,
             signal: controller.signal,
             cache: 'no-store',
+            ...(headers ? { headers } : {}),
             ...(requestMode === 'no-cors' ? { mode: 'no-cors' } : {}),
           });
           const isOpaqueResponse =
