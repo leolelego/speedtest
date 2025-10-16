@@ -85,7 +85,6 @@ const DL_DURATION_S = 6;
 const UL_DURATION_S = 5;
 const RTT_PINGS = 12;
 const TOTAL_STEPS = 3;
-const RAINBOW_THEME_THRESHOLD_MBPS = 40;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const fmtMbps = (bps) => `${(bps / 1e6).toFixed(2)} Mbps`;
@@ -222,17 +221,21 @@ export default function NetworkCapabilityTester() {
   const [stepErrors, setStepErrors] = useState({ dl: null, ul: null, rtt: null });
   const [isRunning, setIsRunning] = useState(false);
   const [status, setStatus] = useState({ label: 'Idle', step: 0 });
+  const [isDarkMode, setIsDarkMode] = useState(false);
   const runningRef = useRef(false);
   const abortersRef = useRef([]);
 
   useEffect(() => {
     const root = document.documentElement;
     const query = window.matchMedia('(prefers-color-scheme: dark)');
-    const applyScheme = () => {
-      if (query.matches) {
+    const applyScheme = (event) => {
+      const prefersDark = event?.matches ?? query.matches;
+      if (prefersDark) {
         root.classList.add('dark');
+        setIsDarkMode(true);
       } else {
         root.classList.remove('dark');
+        setIsDarkMode(false);
       }
     };
 
@@ -863,10 +866,7 @@ export default function NetworkCapabilityTester() {
   const isSamplesLoading = isRunning && samples.dl === 0 && samples.ul === 0 && samples.rtt === 0;
   const isCapabilitiesLoading = isRunning && caps.length === 0;
 
-  const hasRainbowDownload =
-    !stepErrors.dl && dlBps != null && dlBps / 1e6 >= RAINBOW_THEME_THRESHOLD_MBPS;
-  const isRainbowThemeActive = hasRainbowDownload && !isRunning;
-  const appRootClassName = `app-root${isRainbowThemeActive ? ' app-root--rainbow' : ''}`;
+  const appRootClassName = `app-root ${isDarkMode ? 'app-root--halloween' : 'app-root--rainbow'}`;
 
   return (
     <div className={appRootClassName}>

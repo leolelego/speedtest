@@ -41,6 +41,39 @@
   z-index: 1;
 }
 
+.app-root--halloween {
+  --background: radial-gradient(circle at 20% 15%, #1e1a2f 0%, #0f0c1f 50%, #03010a 100%);
+  --surface: rgba(26, 20, 36, 0.85);
+  --surface-strong: rgba(36, 26, 46, 0.92);
+  --surface-border: rgba(249, 115, 22, 0.3);
+  --text-primary: #fef3c7;
+  --text-secondary: rgba(252, 211, 77, 0.8);
+  --accent: #f97316;
+  --accent-hover: #fb923c;
+  --danger: #fb7185;
+  --danger-hover: #fda4af;
+  --shadow-color: rgba(249, 115, 22, 0.4);
+  position: relative;
+}
+
+.app-root--halloween::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(circle at 15% -10%, rgba(249, 115, 22, 0.25), transparent 55%),
+    radial-gradient(circle at 85% 110%, rgba(236, 72, 153, 0.18), transparent 60%),
+    linear-gradient(170deg, rgba(10, 10, 22, 0.95), rgba(3, 1, 10, 0.92));
+  pointer-events: none;
+  opacity: 0.9;
+  z-index: 0;
+}
+
+.app-root--halloween > * {
+  position: relative;
+  z-index: 1;
+}
+
 .theme-banner {
   display: flex;
   align-items: center;
@@ -495,6 +528,25 @@
 
   .skeleton::after {
     animation-duration: 2.4s;
+  }
+}
+
+@media (min-width: 1024px) and (min-height: 780px) {
+  .app-root {
+    padding-bottom: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .app-container {
+    flex: 1 1 auto;
+    padding-bottom: 2rem;
+  }
+
+  .app-footer {
+    position: static;
+    margin-top: auto;
   }
 }
 
