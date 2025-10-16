@@ -870,14 +870,6 @@ export default function NetworkCapabilityTester() {
 
   return (
     <div className={appRootClassName}>
-      {isRainbowThemeActive && (
-        <div className="theme-banner" role="status" aria-live="polite">
-          <span className="theme-banner__emoji" aria-hidden="true">
-            🦄
-          </span>
-          <span className="theme-banner__text">Mode Rainbow &amp; Licorne activé&nbsp;!</span>
-        </div>
-      )}
       {isRunning && (
         <div className="loading-banner" role="status" aria-live="polite">
           <span className="loading-banner__spinner" aria-hidden="true" />
