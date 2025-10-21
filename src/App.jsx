@@ -116,6 +116,9 @@ const CAPABILITY_GROUPS = [
 ];
 const LATENCY_URL = 'https://speed.cloudflare.com/__down?bytes=16';
 const DL_DURATION_S = 6;
+const DL_INITIAL_CHUNK_BYTES = 2 ** 23;
+const DL_LOW_SPEED_DURATION_S = 18;
+const DL_LOW_SPEED_CHUNK_BYTES = 2 ** 18;
 const UL_DURATION_S = 5;
 const RTT_PINGS = 12;
 const TOTAL_STEPS = 3;
@@ -331,83 +334,118 @@ export default function NetworkCapabilityTester() {
     [logProgress, resetAborters],
   );
 
-  const measureDownload = useCallback(async (onProgress) => {
-    const controller = new AbortController();
-    const unregister = registerAborter(controller);
+  const measureDownload = useCallback(
+    async (onProgress) => {
+      const measurementStart = performance.now();
+      let aggregatedBytes = 0;
+      let aggregatedCount = 0;
+      let lastProgressEmit = measurementStart;
+      let failureError = null;
 
-    const start = performance.now();
-    const end = start + DL_DURATION_S * 1000;
+      const runPhase = async ({ durationSeconds, chunkBytes }) => {
+        const controller = new AbortController();
+        const unregister = registerAborter(controller);
 
-    let bytes = 0;
-    let count = 0;
-    let inFlight = 0;
-    const MAX_PAR = 6;
-    let lastError = null;
-    let lastProgressEmit = start;
+        const phaseStart = performance.now();
+        const phaseEnd = phaseStart + durationSeconds * 1000;
 
-    async function pump() {
-      while (performance.now() < end && runningRef.current) {
-        if (inFlight >= MAX_PAR) {
-          await sleep(10);
-          continue;
+        let bytes = 0;
+        let count = 0;
+        let inFlight = 0;
+        const MAX_PAR = 6;
+        let lastError = null;
+
+        async function pump() {
+          while (performance.now() < phaseEnd && runningRef.current) {
+            if (inFlight >= MAX_PAR) {
+              await sleep(10);
+              continue;
+            }
+            inFlight += 1;
+            try {
+              const response = await fetch(
+                `${DOWNLOAD_SOURCES[0](chunkBytes)}&cacheBust=${Math.random()}`,
+                { signal: controller.signal, cache: 'no-store' },
+              );
+              if (!response.ok) {
+                throw new Error(
+                  response.status === 429
+                    ? 'Download test was rate limited (HTTP 429).'
+                    : `Download request failed with status ${response.status}.`,
+                );
+              }
+              const arrayBuffer = await response.arrayBuffer();
+              bytes += arrayBuffer.byteLength;
+              count += 1;
+              lastError = null;
+              const now = performance.now();
+              if (onProgress && now - lastProgressEmit >= 500) {
+                lastProgressEmit = now;
+                const totalBytes = aggregatedBytes + bytes;
+                const totalCount = aggregatedCount + count;
+                const elapsed = Math.max((now - measurementStart) / 1000, 0.001);
+                onProgress({
+                  bytes: totalBytes,
+                  count: totalCount,
+                  elapsed,
+                  bps: (totalBytes * 8) / elapsed,
+                });
+              }
+            } catch (error) {
+              if (error?.name === 'AbortError') {
+                return;
+              }
+              lastError =
+                error instanceof Error ? error : new Error('Download request failed.');
+            } finally {
+              inFlight -= 1;
+            }
+          }
         }
-        inFlight += 1;
-        try {
-          const response = await fetch(
-            `${DOWNLOAD_SOURCES[0](2 ** 20 * 8)}&cacheBust=${Math.random()}`,
-            { signal: controller.signal, cache: 'no-store' },
-          );
-          if (!response.ok) {
-            throw new Error(
-              response.status === 429
-                ? 'Download test was rate limited (HTTP 429).'
-                : `Download request failed with status ${response.status}.`,
-            );
-          }
-          const arrayBuffer = await response.arrayBuffer();
-          bytes += arrayBuffer.byteLength;
-          count += 1;
-          lastError = null;
-          const now = performance.now();
-          if (onProgress && now - lastProgressEmit >= 500) {
-            lastProgressEmit = now;
-            const elapsed = (now - start) / 1000;
-            const duration = Math.max(elapsed, 0.001);
-            onProgress({
-              bytes,
-              count,
-              elapsed,
-              bps: (bytes * 8) / duration,
-            });
-          }
-        } catch (error) {
-          if (error?.name === 'AbortError') {
-            return;
-          }
-          lastError = error instanceof Error ? error : new Error('Download request failed.');
-        } finally {
-          inFlight -= 1;
+
+        await Promise.race([
+          Promise.allSettled(Array.from({ length: MAX_PAR }, pump)),
+          sleep(durationSeconds * 1000 + 2000),
+        ]);
+
+        controller.abort();
+        unregister();
+
+        if (bytes === 0 && lastError) {
+          failureError = lastError;
         }
+
+        aggregatedBytes += bytes;
+        aggregatedCount += count;
+
+        return { bytes, count };
+      };
+
+      await runPhase({ durationSeconds: DL_DURATION_S, chunkBytes: DL_INITIAL_CHUNK_BYTES });
+
+      if (aggregatedBytes === 0) {
+        await runPhase({
+          durationSeconds: DL_LOW_SPEED_DURATION_S,
+          chunkBytes: DL_LOW_SPEED_CHUNK_BYTES,
+        });
       }
-    }
 
-    await Promise.race([
-      Promise.allSettled(Array.from({ length: MAX_PAR }, pump)),
-      sleep(DL_DURATION_S * 1000 + 2000),
-    ]);
+      if (aggregatedBytes === 0 && failureError) {
+        throw failureError;
+      }
 
-    controller.abort();
-    unregister();
+      const totalDurationSeconds = Math.max(
+        (performance.now() - measurementStart) / 1000,
+        0.001,
+      );
 
-    if (bytes === 0 && lastError) {
-      throw lastError;
-    }
-
-    return {
-      bps: (bytes * 8) / Math.max((performance.now() - start) / 1000, 0.001),
-      count,
-    };
-  }, [registerAborter]);
+      return {
+        bps: (aggregatedBytes * 8) / totalDurationSeconds,
+        count: aggregatedCount,
+      };
+    },
+    [registerAborter],
+  );
 
   const measureUpload = useCallback(async ({ onProgress, onTargetChange } = {}) => {
     const controller = new AbortController();
