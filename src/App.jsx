@@ -62,14 +62,14 @@ const CAPABILITY_GROUPS = [
       {
         key: 'teams-720p',
         label: 'Video 720p',
-        detail: '≥1.5/1 Mbps, RTT ≤150ms',
-        thresholds: { minDl: 1.5, minUl: 1, maxRtt: 150, maxLoss: 3 },
+        detail: '≥1.5/1 Mbps',
+        thresholds: { minDl: 1.5, minUl: 1 },
       },
       {
         key: 'teams-audio',
         label: 'Audio only',
-        detail: '≥0.3/0.3 Mbps, RTT ≤200ms',
-        thresholds: { minDl: 0.3, minUl: 0.3, maxRtt: 200, maxLoss: 5 },
+        detail: '≥0.3/0.3 Mbps',
+        thresholds: { minDl: 0.3, minUl: 0.3 },
       },
     ],
   },
@@ -80,19 +80,19 @@ const CAPABILITY_GROUPS = [
         key: 'streaming-4k',
         label: '4K',
         detail: '≥25 Mbps down',
-        thresholds: { minDl: 25, maxLoss: 2 },
+        thresholds: { minDl: 25 },
       },
       {
         key: 'streaming-1080p',
         label: '1080p',
         detail: '≥5 Mbps down',
-        thresholds: { minDl: 5, maxLoss: 3 },
+        thresholds: { minDl: 5 },
       },
       {
         key: 'streaming-720p',
         label: '720p',
         detail: '≥3 Mbps down',
-        thresholds: { minDl: 3, maxLoss: 4 },
+        thresholds: { minDl: 3 },
       },
     ],
   },
@@ -102,14 +102,14 @@ const CAPABILITY_GROUPS = [
       {
         key: 'geforce-1080p60',
         label: '1080p60',
-        detail: '≥25 Mbps, RTT ≤40ms',
-        thresholds: { minDl: 25, maxRtt: 40, maxLoss: 1.5 },
+        detail: '≥25 Mbps down',
+        thresholds: { minDl: 25 },
       },
       {
         key: 'geforce-720p60',
         label: '720p60',
-        detail: '≥15 Mbps, RTT ≤80ms',
-        thresholds: { minDl: 15, maxRtt: 80, maxLoss: 2.5 },
+        detail: '≥15 Mbps down',
+        thresholds: { minDl: 15 },
       },
     ],
   },
@@ -121,7 +121,7 @@ const DL_LOW_SPEED_DURATION_S = 18;
 const DL_LOW_SPEED_CHUNK_BYTES = 2 ** 18;
 const UL_DURATION_S = 5;
 const RTT_PINGS = 12;
-const TOTAL_STEPS = 2;
+const TOTAL_STEPS = 3;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const fmtMbps = (bps) => `${(bps / 1e6).toFixed(2)} Mbps`;
@@ -755,57 +755,33 @@ export default function NetworkCapabilityTester() {
         return;
       }
 
-      setStatus({ label: 'Analyzing services…', step: 2 });
-      logProgress('Service capability analysis ready.');
-
-      if (!runningRef.current) {
-        return;
-      }
-
-      setStatus({ label: 'Measuring latency & quality…', step: 2 });
-      logProgress('Latency test started.');
-      console.info('[SpeedTest] Measuring latency, jitter, and loss');
+      setStatus({ label: 'Measuring upload speed…', step: 2 });
+      logProgress('Upload test started.');
       try {
-        const latency = await measureLatency((progress) => {
-          if (progress.error) {
-            logProgress('⚠️ Latency request failed, retrying…');
-            return;
-          }
-          if (progress.last != null) {
-            logProgress(
-              `Latency sample ${progress.count}: ${progress.last.toFixed(1)} ms (${progress.drops} drops)`,
-            );
-          }
-        });
-        console.info('[SpeedTest] Latency test finished', {
-          averageLatencyMs: latency.avg,
-          jitterMs: latency.jit,
-          lossPercent: latency.loss,
-          samplesCollected: latency.count,
-        });
+        const upload = await measureUpload();
         if (!runningRef.current) {
-          console.info('[SpeedTest] Latency measurement aborted');
-          logProgress('Latency measurement aborted.');
+          logProgress('Upload measurement aborted.');
           return;
         }
-        setLatencyMs(latency.avg);
-        setJitterMs(latency.jit);
-        setLossPct(latency.loss);
-        setSamples((previous) => ({ ...previous, rtt: latency.count }));
-        logProgress('Latency test completed successfully.');
+        setUlBps(upload.bps);
+        setSamples((previous) => ({ ...previous, ul: upload.count }));
+        setStepErrors((previous) => ({ ...previous, ul: null }));
+        logProgress('Upload test completed successfully.');
       } catch (error) {
-        encounteredErrors.rtt = true;
+        encounteredErrors.ul = true;
         const message = error instanceof Error ? error.message : 'Unknown error.';
-        setStepErrors((previous) => ({ ...previous, rtt: message }));
-        logProgress(`⚠️ Latency test error: ${message}`);
-        console.warn('[SpeedTest] Latency test failed but continuing', error);
+        setStepErrors((previous) => ({ ...previous, ul: message }));
+        logProgress(`⚠️ Upload test error: ${message}`);
       }
 
       if (!runningRef.current) {
         return;
       }
 
-      const hasErrors = encounteredErrors.dl || encounteredErrors.rtt;
+      setStatus({ label: 'Analyzing services…', step: 3 });
+      logProgress('Service capability analysis ready.');
+
+      const hasErrors = encounteredErrors.dl || encounteredErrors.ul;
       runningRef.current = false;
       setIsRunning(false);
       const finalLabel = hasErrors ? 'Test finished with warnings' : 'Test complete';
@@ -823,7 +799,6 @@ export default function NetworkCapabilityTester() {
     handleTestError,
     logProgress,
     measureDownload,
-    measureLatency,
     measureUpload,
     resetAborters,
   ]);
