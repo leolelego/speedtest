@@ -121,7 +121,7 @@ const DL_LOW_SPEED_DURATION_S = 18;
 const DL_LOW_SPEED_CHUNK_BYTES = 2 ** 18;
 const UL_DURATION_S = 5;
 const RTT_PINGS = 12;
-const TOTAL_STEPS = 3;
+const TOTAL_STEPS = 2;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const fmtMbps = (bps) => `${(bps / 1e6).toFixed(2)} Mbps`;
@@ -258,6 +258,7 @@ export default function NetworkCapabilityTester() {
   const [stepErrors, setStepErrors] = useState({ dl: null, ul: null, rtt: null });
   const [isRunning, setIsRunning] = useState(false);
   const [status, setStatus] = useState({ label: 'Idle', step: 0 });
+  const [isRunningUploadOnly, setIsRunningUploadOnly] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const runningRef = useRef(false);
   const abortersRef = useRef([]);
@@ -326,6 +327,7 @@ export default function NetworkCapabilityTester() {
       resetAborters();
       setIsRunning(false);
       setStatus({ label: 'Test failed', step: 0 });
+      setIsRunningUploadOnly(false);
       logProgress(`❌ Fatal error: ${message}`);
       if (typeof window !== 'undefined' && typeof window.alert === 'function') {
         window.alert(`Speed test failed: ${message}`);
@@ -697,7 +699,7 @@ export default function NetworkCapabilityTester() {
     };
   }, [registerAborter]);
 
-  const startTests = useCallback(async () => {
+  const startPrimaryTests = useCallback(async () => {
     if (runningRef.current) return;
 
     resetAborters();
@@ -753,59 +755,14 @@ export default function NetworkCapabilityTester() {
         return;
       }
 
-      setStatus({ label: 'Measuring upload speed…', step: 2 });
-      logProgress('Upload test started.');
-      console.info('[SpeedTest] Measuring upload throughput');
-      try {
-        const upload = await measureUpload({
-          onProgress: (progress) => {
-            logProgress(
-              `Upload progress: ${(progress.bytes / 1e6).toFixed(1)} MB sent, ${fmtMbps(
-                progress.bps,
-              )}`,
-            );
-          },
-          onTargetChange: (target) => {
-            const label = target.name || 'alternate endpoint';
-            let description = label;
-            try {
-              const url = new URL(target.url);
-              description = `${label} (${url.host})`;
-            } catch {
-              description = label;
-            }
-            if (target.reason === 'initial') {
-              logProgress(`Upload endpoint: ${description}`);
-            } else if (target.reason === 'fallback') {
-              logProgress(`Switched upload endpoint to ${description}`);
-            }
-          },
-        });
-        console.info('[SpeedTest] Upload test finished', {
-          megabitsPerSecond: upload.bps / 1e6,
-          requestsCompleted: upload.count,
-        });
-        if (!runningRef.current) {
-          console.info('[SpeedTest] Upload measurement aborted');
-          logProgress('Upload measurement aborted.');
-          return;
-        }
-        setUlBps(upload.bps);
-        setSamples((previous) => ({ ...previous, ul: upload.count }));
-        logProgress('Upload test completed successfully.');
-      } catch (error) {
-        encounteredErrors.ul = true;
-        const message = error instanceof Error ? error.message : 'Unknown error.';
-        setStepErrors((previous) => ({ ...previous, ul: message }));
-        logProgress(`⚠️ Upload test error: ${message}`);
-        console.warn('[SpeedTest] Upload test failed but continuing', error);
-      }
+      setStatus({ label: 'Analyzing services…', step: 2 });
+      logProgress('Service capability analysis ready.');
 
       if (!runningRef.current) {
         return;
       }
 
-      setStatus({ label: 'Measuring latency & quality…', step: 3 });
+      setStatus({ label: 'Measuring latency & quality…', step: 2 });
       logProgress('Latency test started.');
       console.info('[SpeedTest] Measuring latency, jitter, and loss');
       try {
@@ -848,7 +805,7 @@ export default function NetworkCapabilityTester() {
         return;
       }
 
-      const hasErrors = encounteredErrors.dl || encounteredErrors.ul || encounteredErrors.rtt;
+      const hasErrors = encounteredErrors.dl || encounteredErrors.rtt;
       runningRef.current = false;
       setIsRunning(false);
       const finalLabel = hasErrors ? 'Test finished with warnings' : 'Test complete';
@@ -930,15 +887,15 @@ export default function NetworkCapabilityTester() {
   useEffect(() => {
     const timer = setTimeout(() => {
       console.info('[SpeedTest] Auto-starting test after initial delay');
-      startTests();
+      startPrimaryTests();
     }, 2000);
 
     return () => clearTimeout(timer);
-  }, [startTests]);
+  }, [startPrimaryTests]);
 
   const showStepMeter = isRunning && status.step > 0;
   const isDownloadLoading = isRunning && dlBps == null && !stepErrors.dl;
-  const isUploadLoading = isRunning && ulBps == null && !stepErrors.ul;
+  const isUploadLoading = (isRunning && isRunningUploadOnly) && ulBps == null && !stepErrors.ul;
   const isLatencyLoading = isRunning && latencyMs == null && !stepErrors.rtt;
   const isJitterLoading = isRunning && jitterMs == null && !stepErrors.rtt;
   const isLossLoading = isRunning && lossPct == null && !stepErrors.rtt;
@@ -1004,6 +961,7 @@ export default function NetworkCapabilityTester() {
                     renderThroughput(dlBps, stepErrors.dl)
                   )}
                 </div>
+                <button type="button" className="mini-button" onClick={startPrimaryTests} disabled={isRunning}>Full download test</button>
               </div>
               <div className={`stat-card${isUploadLoading ? ' stat-card--loading' : ''}`}>
                 <div className="stat-card__label">
@@ -1013,7 +971,7 @@ export default function NetworkCapabilityTester() {
                       <span className="sr-only">Measuring upload speed…</span>
                     </>
                   ) : (
-                    'Upload'
+                    'Upload (on demand)'
                   )}
                 </div>
                 <div className="stat-card__value">
@@ -1139,7 +1097,7 @@ export default function NetworkCapabilityTester() {
 
         <section className="panel panel--subtle">
           <div className="panel__content">
-            <h3 className="panel-heading">Can I…?</h3>
+            <div className="section-header"><h3 className="panel-heading">Can I…?</h3><button type="button" className="mini-button" onClick={async () => { if (runningRef.current) return; setIsRunningUploadOnly(true); runningRef.current=true; setIsRunning(true); setStatus({label:'Measuring upload speed…', step:2}); try { const upload=await measureUpload(); setUlBps(upload.bps); setSamples((p)=>({...p,ul:upload.count})); setStepErrors((p)=>({...p,ul:null})); } catch (error) { const message = error instanceof Error ? error.message : 'Unknown error.'; setStepErrors((p)=>({...p,ul:message})); } finally { runningRef.current=false; setIsRunning(false); setIsRunningUploadOnly(false); setStatus({label:'Test complete', step:TOTAL_STEPS}); } }} disabled={isRunning}>{ulBps == null ? "Measure upload" : "Re-test upload"}</button></div>
             <div className="capabilities-grid">
               {isCapabilitiesLoading && (
                 <>
@@ -1168,7 +1126,7 @@ export default function NetworkCapabilityTester() {
               )}
               {!isCapabilitiesLoading && caps.length === 0 && (
                 <p className="empty-message">
-                  Run the test for recommendations.
+                  Running quick test for recommendations…
                 </p>
               )}
               {!isCapabilitiesLoading &&
@@ -1254,17 +1212,7 @@ export default function NetworkCapabilityTester() {
         </div>
       </div>
 
-      <div className="app-footer">
-        <div className="app-footer__inner">
-          <button
-            type="button"
-            onClick={isRunning ? stopTests : startTests}
-            className={`action-button ${isRunning ? 'action-button--stop' : 'action-button--start'}`}
-          >
-            {isRunning ? 'Stop' : 'Run test'}
-          </button>
-        </div>
-      </div>
+
     </div>
   );
 }
