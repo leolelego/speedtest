@@ -1254,17 +1254,6 @@ export default function NetworkCapabilityTester() {
         </div>
       </div>
 
-      <div className="app-footer">
-        <div className="app-footer__inner">
-          <button
-            type="button"
-            onClick={isRunning ? stopTests : startTests}
-            className={`action-button ${isRunning ? 'action-button--stop' : 'action-button--start'}`}
-          >
-            {isRunning ? 'Stop' : 'Run test'}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
